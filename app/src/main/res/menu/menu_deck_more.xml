@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<menu xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <item
+        android:id="@+id/action_manage"
+        android:title="카드 관리" />
+
+    <item
+        android:id="@+id/action_delete"
+        android:title="덱 삭제" />
+
+    <item
+        android:id="@+id/action_settings"
+        android:title="설정" />
+
+</menu>
