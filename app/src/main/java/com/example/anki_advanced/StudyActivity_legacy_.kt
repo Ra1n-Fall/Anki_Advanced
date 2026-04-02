@@ -11,6 +11,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.Calendar // 자정 계산을 위해 Calendar 사용
 
+/*
 private data class Sm2Result(
     val repetition: Int,
     val intervalDays: Int,
@@ -513,3 +514,4 @@ class StudyActivity : AppCompatActivity() {
         return cal.timeInMillis
     }
 }
+*/

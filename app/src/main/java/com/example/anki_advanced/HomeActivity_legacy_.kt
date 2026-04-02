@@ -31,6 +31,7 @@ data class DeckUi(
 )
 
 
+/*
 class HomeActivity : AppCompatActivity() {
 
     private val items = mutableListOf<DeckUi>()   // 화면에 표시될 덱 목록(UI 모델)
@@ -249,5 +250,6 @@ class HomeActivity : AppCompatActivity() {
         return cal.timeInMillis
     }
 }
+*/
 
 

@@ -42,6 +42,11 @@ android {
     }
 
 
+
+}
+
+tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().configureEach {
+    exclude("**/legacy/**")
 }
 
 dependencies {

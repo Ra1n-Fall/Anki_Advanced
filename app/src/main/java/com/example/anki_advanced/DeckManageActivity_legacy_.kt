@@ -24,6 +24,7 @@ data class DeckStudyLimit(
     val dailyReviewLimit: Int
 )
 
+/*
 class DeckManageActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityDeckManageBinding
@@ -267,4 +268,5 @@ class DeckManageActivity : AppCompatActivity() {
 
 
 }
+*/
 
