@@ -412,41 +412,76 @@ private fun BackFace(card: CardEntity?, modifier: Modifier = Modifier) {
 
 // ── 채점 버튼 행 ──
 // [변경] setButtonsEnabled() 제거 → isLoading으로 버튼 비활성화
-// 기존: setButtonsEnabled(false/true)로 btnAgain/btnHard/btnGood/btnEasy/btnShowAnswer/btnUndo 6개 직접 제어
-// 변경: isLoading StateFlow를 각 버튼의 enabled 파라미터에 연결
+// 기존: setButtonsEnabled(false/true)로 btnAgain/btnHard/btnGood/btnEasy 6개 직접 제어
+// 변경: isLoading StateFlow를 각 버튼의 disabled 파라미터에 연결
+//
+// ── 클릭 연결 흐름 ──
+// GradeButton 클릭
+//   → { onGrade(0~3) } 람다 실행          (GradeButtonRow에서 주입)
+//     → onGrade(Int) 콜백 호출             (StudyScreenContent에서 받아 그대로 전달)
+//       → { viewModel.applyGrade(it) }     (StudyScreen에서 ViewModel과 최초 연결)
+//         → StudyViewModel.applyGrade(score) 실행
+//
+// StudyScreenContent / GradeButtonRow / GradeButton 은 ViewModel을 전혀 모름
+// 콜백 람다만 받아서 아래로 전달 → ViewModel 없이 Preview 가능한 구조
 @Composable
 private fun GradeButtonRow(isLoading: Boolean, onGrade: (Int) -> Unit, modifier: Modifier = Modifier) {
+    // weight(1f) 4개 → Row 너비를 4등분해서 각 버튼이 동일한 폭 차지
     Row(modifier = modifier, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         GradeButton("다시",   "1분", StAgain, isLoading, Modifier.weight(1f)) { onGrade(0) }
         GradeButton("어려움", "2일", StHard,  isLoading, Modifier.weight(1f)) { onGrade(1) }
         GradeButton("좋음",   "4일", StGood,  isLoading, Modifier.weight(1f)) { onGrade(2) }
         GradeButton("쉬움",   "7일", StEasy,  isLoading, Modifier.weight(1f)) { onGrade(3) }
+        // 마지막 파라미터 { onGrade(n) } 가 GradeButton의 onClick 람다로 전달됨
+        // 클릭 시 Button(onClick = onClick) 에 의해 실행
     }
 }
 
+// label    : 버튼 중앙 텍스트 — "다시", "어려움", "좋음", "쉬움"
+// timeHint : 버튼 상단 작은 텍스트 — "1분", "2일", "4일", "7일"
+// color    : 버튼 고유 색상 — Again=빨강, Hard=주황, Good=파랑, Easy=초록
+// disabled : true이면 버튼 비활성화 (isLoading 값이 들어옴)
+// onClick  : 클릭 시 실행할 람다 — GradeButtonRow에서 { onGrade(n) } 이 주입됨
 @Composable
 private fun GradeButton(
     label: String, timeHint: String, color: Color,
     disabled: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit
 ) {
     Button(
-        onClick = onClick, enabled = !disabled,
+        onClick = onClick,          // 클릭 시 주입된 람다 실행 → onGrade(n) → viewModel.applyGrade(n)
+        enabled = !disabled,        // disabled = true(로딩 중)이면 클릭 차단
         modifier = modifier.height(72.dp),
+        // 외부에서 받은 modifier(weight 등)에 height를 체이닝
+        // modifier.height() 순서: 외부 modifier 먼저, height 나중
         colors = ButtonDefaults.buttonColors(
-            containerColor = StSurfaceLow, contentColor = color,
-            disabledContainerColor = StSurfaceLow.copy(alpha = 0.5f),
-            disabledContentColor = color.copy(alpha = 0.4f)
+            containerColor = StSurfaceLow,                      // 활성 배경 (연한 회색)
+            contentColor   = color,                             // 활성 텍스트 색 (난이도 색상)
+            disabledContainerColor = StSurfaceLow.copy(alpha = 0.5f), // 비활성 배경 (반투명)
+            disabledContentColor   = color.copy(alpha = 0.4f)        // 비활성 텍스트 (흐리게)
+            // enabled = false 이면 자동으로 disabled~ 색상으로 교체됨
         ),
-        shape = RoundedCornerShape(24.dp),
+        shape = RoundedCornerShape(24.dp), // 모서리 24dp — CircleShape보다 살짝 덜 둥근 모양
         contentPadding = PaddingValues(4.dp),
+        // 기본 내부 여백(수평 24dp)을 4dp로 줄임 → Column 내용이 잘리지 않도록
         elevation = ButtonDefaults.buttonElevation(0.dp, 0.dp, 0.dp)
+        // 기본/눌림/포커스 모두 그림자 제거 → 배경색만으로 구분하는 플랫 디자인
     ) {
+        // 버튼 내부 세로 구조:
+        //  ┌─────────────┐
+        //  │  "1분"       │  ← timeHint: 10sp, alpha 0.6 흐린 회색 (보조 정보)
+        //  │  "다시"      │  ← label:    13sp, 난이도 고유 색상 (메인 텍스트)
+        //  │   ●          │  ← 원형 도트 6dp, 난이도 색상 25% 투명도 (장식용)
+        //  └─────────────┘
         Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
             Text(timeHint, fontSize = 10.sp, fontWeight = FontWeight.Bold, color = StOnSurfaceVar.copy(alpha = 0.6f))
+            // alpha = 0.6 → 흐리게 처리해 보조 정보임을 시각적으로 표현
             Spacer(Modifier.height(2.dp))
             Text(label, fontSize = 13.sp, fontWeight = FontWeight.Bold, color = color)
+            // 난이도 고유 색상 그대로 → 각 버튼을 색으로 구분
             Spacer(Modifier.height(4.dp))
             Box(modifier = Modifier.size(6.dp).background(color.copy(alpha = 0.25f), CircleShape))
+            // 작은 원형 도트 — 순수 장식용
+            // alpha = 0.25 → 텍스트보다 훨씬 연하게
         }
     }
 }
