@@ -12,6 +12,10 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.Calendar
 
+// [유지] StudyUiState 열거형 동일
+// 기존: StudyActivity 내부에 선언
+// 변경: 별도 파일 수준으로 이동 (StudyScreen에서도 참조하므로)
+// QUESTION = 앞면만 보이는 상태, ANSWER = 뒷면 + 채점 버튼, DONE = 학습 완료
 enum class StudyUiState { QUESTION, ANSWER, DONE }
 
 private data class Sm2Result(
@@ -22,15 +26,22 @@ private data class Sm2Result(
 )
 
 // [유지] UndoEntry 구조 동일 — prevCard + insertedReviewLogId
-// 기존: StudyActivity 내부에 선언 (큐 스냅샷 제거 후 이 두 필드만 필요)
+// 기존: StudyActivity 내부에 선언
 // 변경: ViewModel 파일 수준으로 이동
+// prevCard: 채점 전 카드 상태 전체를 백업 (status, learningStep, nextReviewAt 포함)
+//           → 언두 시 DB를 이 상태로 되돌림
+// insertedReviewLogId: 채점으로 삽입된 리뷰 로그 row의 id
+//           → 언두 시 이 id로 로그를 삭제
+// insertedReviewLogId가 null인 경우: applyGrade()에서 undo 스택에 먼저 push하고
+//           DB insert가 끝난 뒤 logId를 채워 넣기 때문에 일시적으로 null
 private data class UndoEntry(
-    val prevCard: CardEntity,        // 채점 전 카드 상태 (status, learningStep, nextReviewAt 등)
-    val insertedReviewLogId: Long?   // 실행 취소할 카드의 로그 DB 속 아이디
+    val prevCard: CardEntity,
+    val insertedReviewLogId: Long?
 )
 
 // [유지] LEARNING 단계 시간 동일
-// step 0 → 1분 후, step 1 → 10분 후
+// step 0 → 1분(60,000ms) 후, step 1 → 10분(600,000ms) 후
+// 이유: 실제 Anki의 기본 학습 단계(1min, 10min)와 동일
 private val LEARNING_STEPS_MS = listOf(
     1 * 60 * 1000L,
     10 * 60 * 1000L
@@ -38,11 +49,14 @@ private val LEARNING_STEPS_MS = listOf(
 
 // [변경] StudyActivity → StudyViewModel
 // 기존: AppCompatActivity 상속, lifecycleScope + binding으로 UI 직접 제어
+//       currentCard, undoStack 등이 Activity 멤버 변수 → 화면 회전 시 초기화
 // 변경: AndroidViewModel 상속, StateFlow로 상태 노출 → StudyScreen이 구독
+//       ViewModel은 화면 회전에도 살아남아 상태 유지됨
 // 이유: UI 로직(Compose)과 비즈니스 로직 분리, Activity 재생성 시 상태 유지
 class StudyViewModel(application: Application) : AndroidViewModel(application) {
 
     // [유지] DB 인스턴스 생성 방식 동일
+    // application Context로 생성하므로 Activity 생명주기에 독립적
     private val db = Room.databaseBuilder(
         application,
         AppDatabase::class.java,
@@ -50,61 +64,79 @@ class StudyViewModel(application: Application) : AndroidViewModel(application) {
     ).fallbackToDestructiveMigration().build()
 
     // [유지] undoStack 구조 동일
+    // ArrayDeque를 스택으로 사용: addLast()로 push, removeLast()로 pop
     private val undoStack = ArrayDeque<UndoEntry>()
 
     // [변경] Activity 멤버 변수 → StateFlow
-    // 기존: StudyActivity의 currentCard, undoStack 등 일반 멤버 변수
+    // 기존: var currentCard: CardEntity?, private val undoStack 등 일반 멤버 변수
+    //       UI 업데이트는 refreshCardText(), applyUiState() 직접 호출
     // 변경: StateFlow로 선언 → StudyScreen이 collectAsState()로 구독
     //       값이 바뀌면 Compose가 자동으로 화면을 다시 그림 (notify 불필요)
     private val _uiState = MutableStateFlow(StudyUiState.QUESTION)
     val uiState: StateFlow<StudyUiState> = _uiState.asStateFlow()
+    // _uiState: ViewModel 내부에서만 쓰기 가능 (private)
+    // uiState: Screen에는 읽기 전용으로 노출 (asStateFlow로 감쌈)
 
     private val _currentCard = MutableStateFlow<CardEntity?>(null)
     val currentCard: StateFlow<CardEntity?> = _currentCard.asStateFlow()
 
-    // undoStack 크기를 StateFlow로 노출 → Screen이 언두 버튼 표시 여부를 결정
+    // undoStack 자체는 Flow가 아니므로 크기를 별도 StateFlow로 노출
+    // Screen은 undoStackSize > 0 일 때만 언두 버튼을 표시
     private val _undoStackSize = MutableStateFlow(0)
     val undoStackSize: StateFlow<Int> = _undoStackSize.asStateFlow()
 
     // [변경] setButtonsEnabled() 제거 → _isLoading StateFlow로 대체
-    // 기존: setButtonsEnabled(false/true)로 버튼 6개의 isEnabled 직접 제어
-    // 변경: _isLoading 값을 Screen의 각 버튼 enabled 파라미터에 연결
+    // 기존: setButtonsEnabled(false/true)로 버튼 6개(Again/Hard/Good/Easy/ShowAnswer/Undo)의
+    //       isEnabled를 직접 설정
+    //       참고: 작업스레드 이후의 코드는 잠시 중지되지만 이외의 메인스레드 작업은 중지되지 않으므로
+    //             버튼 잠금이 필요했음
+    // 변경: _isLoading 값을 Screen의 각 버튼 enabled 파라미터에 연결 → 선언적으로 처리
     private val _isLoading = MutableStateFlow(false)
     val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
 
     private var deckId: Long = -1L
 
     // [변경] onCreate 직접 호출 → startStudy()로 분리
-    // 기존: Activity onCreate에서 바로 showNextCardOrDone() 호출
-    // 변경: StudyScreen의 LaunchedEffect(deckId)에서 호출
+    // 기존: Activity onCreate에서 deckId = intent.getLongExtra("deck_id", -1L) 후
+    //       바로 lifecycleScope.launch { showNextCardOrDone() } 호출
+    // 변경: Screen의 LaunchedEffect(deckId)에서 startStudy() 호출
+    //       deckId가 바뀔 때마다 자동으로 재호출됨
     fun startStudy(deckId: Long) {
         this.deckId = deckId
         loadNextCard()
     }
 
     // [변경] binding.tvBack.visibility = VISIBLE → _uiState 값 변경
-    // 기존: applyUiState(StudyUiState.ANSWER) 호출로 View visibility 직접 제어
-    // 변경: _uiState 값만 변경, UI 처리는 StudyScreen의 when(uiState) 분기에 위임
+    // 기존: StudyActivity.showCard()에서 binding.tvBack.visibility = View.VISIBLE
+    //       applyUiState(ANSWER)를 별도로 호출해 버튼 visibility까지 일일이 세팅
+    // 변경: _uiState = ANSWER 한 줄로 처리
+    //       StudyScreen의 when(uiState) 분기가 ANSWER일 때 뒷면 + 채점 버튼을 자동 표시
     fun showAnswer() {
         _uiState.value = StudyUiState.ANSWER
     }
 
-    // [변경] applyGrade 구조 동일, setButtonsEnabled 제거
+    // [변경] applyGrade 로직 동일, setButtonsEnabled → _isLoading 교체
     // 기존: setButtonsEnabled(false)로 버튼 잠금 후 lifecycleScope.launch
-    // 변경: _isLoading = true로 Screen에 로딩 상태 전달
+    // 변경: _isLoading = true로 Screen에 로딩 상태 전달 → Screen이 버튼 비활성화 처리
     fun applyGrade(score: Int) {
         val card = _currentCard.value ?: return
+
+        // 채점 전 카드 상태를 먼저 스택에 백업
+        // insertedReviewLogId = null 인 상태로 일단 push
+        // → DB insert가 끝난 뒤 아래에서 logId를 채워 교체함
         undoStack.addLast(UndoEntry(prevCard = card, insertedReviewLogId = null))
         _undoStackSize.value = undoStack.size
-        _isLoading.value = true
+        _isLoading.value = true  // 채점 처리 중 버튼 비활성화
 
         viewModelScope.launch {
             try {
                 val now = System.currentTimeMillis()
+                // 현재 카드의 상태(status, score)에 따라 업데이트될 카드 전체 상태 계산
                 val updatedCard = resolveUpdatedCard(card, score, now)
 
                 var logId = -1L
                 withContext(Dispatchers.IO) {
+                    // 1) SM2 관련 필드 업데이트 (status, repetition, intervalDays, easeFactor, nextReviewAt)
                     db.cardDao().updateSm2(
                         id = card.id,
                         state = score,
@@ -114,7 +146,10 @@ class StudyViewModel(application: Application) : AndroidViewModel(application) {
                         easeFactor = updatedCard.easeFactor,
                         nextReviewAt = updatedCard.nextReviewAt
                     )
+                    // 2) learningStep은 SM2 쿼리와 별도 쿼리로 업데이트
+                    //    이유: learningStep은 SM2 값과 독립적으로 관리되므로
                     db.cardDao().updateLearningStep(card.id, updatedCard.learningStep)
+                    // 3) 리뷰 로그 삽입 → 생성된 row id를 logId에 저장
                     logId = db.reviewLogDao().insert(
                         ReviewLogEntity(
                             deckId = card.deckId,
@@ -123,37 +158,51 @@ class StudyViewModel(application: Application) : AndroidViewModel(application) {
                             sm2Q = toSm2Q(score),
                             reviewedAt = now,
                             isNewAtReview = if (card.status == CARD_NEW) 1 else 0
+                            // 채점 시점에 NEW 카드였는지 기록 (홈 화면 오늘 NEW 카운트에 사용)
                         )
                     )
                 }
+
+                // DB insert가 끝난 뒤 logId를 스택의 최상단 항목에 채워 넣기
+                // removeLast() + addLast()로 교체하는 이유:
+                //   UndoEntry는 data class라 copy()로 일부 필드만 변경 가능
+                //   ArrayDeque는 인덱스 직접 교체가 번거로우므로 pop → 수정 → push 패턴 사용
                 val last = undoStack.removeLast()
                 undoStack.addLast(last.copy(insertedReviewLogId = logId))
                 _undoStackSize.value = undoStack.size
 
-                loadNextCard()
+                loadNextCard()  // 다음 카드 로딩
             } finally {
-                _isLoading.value = false
+                _isLoading.value = false  // 성공/실패 모두 버튼 다시 활성화
             }
         }
     }
 
     // [유지] undoLast 로직 동일
-    // 기존: StudyActivity.undoLast() — DB 복구 + currentCard 직접 복원 (pollNextCard 거치지 않음)
-    // 변경: currentCard 복원을 _currentCard.value 대입으로, UI 상태를 _uiState.value 대입으로 처리
+    // 기존: StudyActivity.undoLast()
+    //       1) 리뷰 로그 삭제  2) DB 카드 상태 복구  3) currentCard = undo.prevCard 직접 대입
+    //       → pollNextCard()를 거치지 않고 prevCard를 바로 화면에 표시
+    //          (복구한 카드의 nextReviewAt이 미래일 수 있으므로 조건 조회를 건너뜀)
+    // 변경: currentCard 복원을 _currentCard.value 대입으로, UI 상태 복원을 _uiState.value 대입으로 처리
     fun undoLast() {
         if (undoStack.isEmpty()) return
-        val undo = undoStack.removeLast()
+        val undo = undoStack.removeLast()   // 스택에서 가장 최근 채점 꺼내기
         _undoStackSize.value = undoStack.size
         _isLoading.value = true
 
         viewModelScope.launch {
             try {
                 withContext(Dispatchers.IO) {
+                    // 1) 리뷰 로그 삭제 (logId가 있을 때만 — DB insert 전에 앱이 종료된 경우 null)
                     if (undo.insertedReviewLogId != null) {
                         db.reviewLogDao().deleteById(undo.insertedReviewLogId)
                     }
+                    // 2) 카드 전체를 채점 전 상태로 되돌림 (status, learningStep, nextReviewAt 포함)
                     db.cardDao().update(undo.prevCard)
                 }
+                // 3) 복구한 카드를 직접 화면에 표시 (loadNextCard() 거치지 않음)
+                //    loadNextCard()를 거치면 시간 조건(nextReviewAt <= now)에 걸려
+                //    방금 복구한 카드가 다시 등장하지 않을 수 있음
                 _currentCard.value = undo.prevCard
                 _uiState.value = StudyUiState.QUESTION
             } finally {
@@ -166,37 +215,49 @@ class StudyViewModel(application: Application) : AndroidViewModel(application) {
     // 기존: Activity 내 lifecycleScope.launch, 결과를 currentCard 멤버 변수에 직접 대입
     //       applyUiState()로 View visibility 직접 제어
     // 변경: viewModelScope.launch, 결과를 _currentCard / _uiState StateFlow로 노출
+    //       카드가 없으면 _uiState = DONE, 있으면 _uiState = QUESTION으로 자동 전환
     private fun loadNextCard() {
         viewModelScope.launch {
             val next = withContext(Dispatchers.IO) {
                 val now = System.currentTimeMillis()
                 val todayStart = startOfTodayMillis(now)
 
+                // 우선순위 1: 시간이 된 LEARNING 카드 (한도 무관)
+                // nextReviewAt <= now 인 LEARNING 카드 — 1분/10분이 경과한 카드
+                // 이유: LEARNING 카드가 정해진 시간에 등장해야 망각곡선 효과 최대화
                 val learning = db.cardDao().getNextLearningCard(deckId, now)
                 if (learning != null) return@withContext learning
 
+                // 오늘 학습한 new/review 수를 조회해 한도 초과 여부 확인
                 val limits = db.deckDao().getStudyLimits(deckId)
                 val newDoneToday = db.reviewLogDao().countNewCardsToday(deckId, todayStart)
                 val reviewDoneToday = db.reviewLogDao().countReviewCardsToday(deckId, todayStart)
 
+                // 우선순위 2: 오늘 REVIEW 카드 (dailyReviewLimit 미초과 시에만)
+                // nextReviewAt <= todayStart(오늘 자정) 인 REVIEW 카드
                 if (reviewDoneToday < limits.dailyReviewLimit) {
                     val review = db.cardDao().getNextReviewCard(deckId, todayStart)
                     if (review != null) return@withContext review
                 }
 
+                // 우선순위 3: NEW 카드 (dailyNewLimit 미초과 시에만)
                 if (newDoneToday < limits.dailyNewLimit) {
                     val new = db.cardDao().getNextNewCard(deckId)
                     if (new != null) return@withContext new
                 }
 
+                // 우선순위 4: 시간이 안 됐지만 대기 중인 LEARNING 카드 (조기 등장)
+                // 1~3순위 카드가 모두 소진됐을 때 아직 nextReviewAt이 미래인 LEARNING 카드를
+                // 시간 조건 무시하고 꺼내옴
+                // 이유: 카드가 남아있는데 "학습 완료"로 잘못 끝나는 문제 방지
                 db.cardDao().getNextPendingLearningCard(deckId)
             }
 
             if (next == null) {
-                _uiState.value = StudyUiState.DONE
+                _uiState.value = StudyUiState.DONE   // 모든 카드 소진 → 완료 화면
             } else {
                 _currentCard.value = next
-                _uiState.value = StudyUiState.QUESTION
+                _uiState.value = StudyUiState.QUESTION  // 새 카드 → 앞면 보기 상태
             }
         }
     }
@@ -204,7 +265,8 @@ class StudyViewModel(application: Application) : AndroidViewModel(application) {
     // ── SM2 알고리즘 ──
 
     // [유지] resolveUpdatedCard 로직 동일
-    // 기존: StudyActivity.resolveUpdatedCard() 와 동일
+    // 카드 상태(status)에 따라 LEARNING 처리 / REVIEW 처리로 분기
+    // NEW 카드는 LEARNING과 동일하게 처리 (첫 학습이므로)
     private fun resolveUpdatedCard(card: CardEntity, score: Int, now: Long): CardEntity {
         return when (card.status) {
             CARD_NEW, CARD_LEARNING -> resolveUpdatedLearningCard(card, score, now)
@@ -214,27 +276,32 @@ class StudyViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     // [유지] NEW/LEARNING 카드 채점 처리 동일
-    // Again → step 0 초기화, 1분 후 재등장
-    // Hard  → 현재 step 유지, 같은 시간 후 재등장
-    // Good  → 다음 step으로 진행, 마지막 step이면 REVIEW 졸업
-    // Easy  → 즉시 REVIEW 졸업
+    // 기존: StudyActivity.resolveUpdatedLearningCard()와 동일
+    // score 0(Again) → step 0으로 초기화, 1분(LEARNING_STEPS_MS[0]) 후 재등장
+    // score 1(Hard)  → 현재 step 유지, 같은 단계 시간 후 재등장
+    // score 2(Good)  → 다음 step으로 진행, 마지막 step 이후면 SM2 계산 후 REVIEW 졸업
+    // score 3(Easy)  → 즉시 SM2 계산 후 REVIEW 졸업
     private fun resolveUpdatedLearningCard(card: CardEntity, score: Int, now: Long): CardEntity {
         return when (score) {
-            0 -> card.copy(status = CARD_LEARNING, state = score, learningStep = 0, nextReviewAt = now + LEARNING_STEPS_MS[0])
-            1 -> {
+            0 -> // Again: step 0으로 리셋, 1분 후 재등장
+                card.copy(status = CARD_LEARNING, state = score, learningStep = 0, nextReviewAt = now + LEARNING_STEPS_MS[0])
+            1 -> { // Hard: 현재 step 유지
                 val step = card.learningStep.coerceIn(0, LEARNING_STEPS_MS.lastIndex)
+                // coerceIn: learningStep이 범위를 벗어났을 경우 안전하게 클램프
                 card.copy(status = CARD_LEARNING, state = score, learningStep = step, nextReviewAt = now + LEARNING_STEPS_MS[step])
             }
-            2 -> {
+            2 -> { // Good: 다음 step으로 진행
                 val nextStep = card.learningStep + 1
                 if (nextStep >= LEARNING_STEPS_MS.size) {
+                    // 마지막 step(10분)을 통과했으므로 REVIEW 졸업
                     val sm2 = applySm2(card, score)
                     card.copy(status = CARD_REVIEW, state = score, learningStep = 0, repetition = sm2.repetition, intervalDays = sm2.intervalDays, easeFactor = sm2.easeFactor, nextReviewAt = sm2.nextReviewAt)
                 } else {
+                    // 아직 step이 남아있으므로 다음 단계로 이동
                     card.copy(status = CARD_LEARNING, state = score, learningStep = nextStep, nextReviewAt = now + LEARNING_STEPS_MS[nextStep])
                 }
             }
-            else -> {
+            else -> { // Easy: step 무시하고 즉시 REVIEW 졸업
                 val sm2 = applySm2(card, score)
                 card.copy(status = CARD_REVIEW, state = score, learningStep = 0, repetition = sm2.repetition, intervalDays = sm2.intervalDays, easeFactor = sm2.easeFactor, nextReviewAt = sm2.nextReviewAt)
             }
@@ -242,12 +309,14 @@ class StudyViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     // [유지] REVIEW 카드 채점 처리 동일
-    // Again → LEARNING 강등, step 0, 1분 후
-    // Hard/Good/Easy → SM2 계산 후 REVIEW 유지
+    // 기존: StudyActivity.resolveUpdatedReviewCard()와 동일
+    // score 0(Again) → LEARNING으로 강등, step 0 초기화, 1분 후 재등장
+    // score 1/2/3    → SM2 계산 후 REVIEW 유지 (각 난이도에 따라 ef/interval 다르게 계산)
     private fun resolveUpdatedReviewCard(card: CardEntity, score: Int, now: Long): CardEntity {
         return when (score) {
-            0 -> card.copy(status = CARD_LEARNING, state = score, learningStep = 0, nextReviewAt = now + LEARNING_STEPS_MS[0])
-            else -> {
+            0 -> // Again: REVIEW → LEARNING 강등
+                card.copy(status = CARD_LEARNING, state = score, learningStep = 0, nextReviewAt = now + LEARNING_STEPS_MS[0])
+            else -> { // Hard/Good/Easy: SM2 계산 후 REVIEW 유지
                 val sm2 = applySm2(card, score)
                 card.copy(status = CARD_REVIEW, state = score, learningStep = 0, repetition = sm2.repetition, intervalDays = sm2.intervalDays, easeFactor = sm2.easeFactor, nextReviewAt = sm2.nextReviewAt)
             }
@@ -255,31 +324,68 @@ class StudyViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     // [유지] applySm2 난이도별 계산 로직 동일
-    // Again → ef-0.20, interval=1
-    // Hard  → ef-0.15, interval*1.2
-    // Good  → ef 유지,  interval*ef
-    // Easy  → ef+0.15, interval*ef*1.3 (easyBonus)
+    // 기존: StudyActivity.applySm2()와 동일
+    // q값(SM-2 품질 점수)에 따라 repetition / intervalDays / easeFactor 갱신
+    // q=0(Again): rep 초기화, interval=1일, ef-0.20 (최솟값 1.3)
+    // q=3(Hard):  rep+1, interval*1.2, ef-0.15
+    // q=4(Good):  rep+1, interval*ef,  ef 변화 없음
+    // q=5(Easy):  rep+1, interval*ef*1.3(easyBonus), ef+0.15
     private fun applySm2(card: CardEntity, score: Int): Sm2Result {
         val q = toSm2Q(score)
-        var ef = card.easeFactor
-        var rep = card.repetition
-        var interval = card.intervalDays
+        var ef = card.easeFactor    // 현재 ease factor (기본 2.5, 최솟값 1.3)
+        var rep = card.repetition   // 누적 정답 횟수
+        var interval = card.intervalDays  // 현재 복습 간격 (일)
 
         when (q) {
-            0 -> { rep = 0; interval = 1; ef = (ef - 0.20).coerceAtLeast(1.3) }
-            3 -> { rep += 1; interval = when (rep) { 1 -> 1; 2 -> 6; else -> (interval * 1.2).toInt().coerceAtLeast(1) }; ef = (ef - 0.15).coerceAtLeast(1.3) }
-            4 -> { rep += 1; interval = when (rep) { 1 -> 1; 2 -> 6; else -> kotlin.math.round(interval * ef).toInt().coerceAtLeast(1) } }
-            else -> { rep += 1; interval = when (rep) { 1 -> 1; 2 -> 6; else -> kotlin.math.round(interval * ef * 1.3).toInt().coerceAtLeast(1) }; ef = (ef + 0.15).coerceAtLeast(1.3) }
+            0 -> { // Again: 처음부터 다시
+                rep = 0
+                interval = 1
+                ef = (ef - 0.20).coerceAtLeast(1.3)  // ef 최솟값 1.3 보장
+            }
+            3 -> { // Hard: 느리게 진행
+                rep += 1
+                interval = when (rep) {
+                    1 -> 1   // 첫 번째 복습: 1일
+                    2 -> 6   // 두 번째 복습: 6일
+                    else -> (interval * 1.2).toInt().coerceAtLeast(1)  // 이후: 현재 간격 * 1.2
+                }
+                ef = (ef - 0.15).coerceAtLeast(1.3)
+            }
+            4 -> { // Good: 정상 진행
+                rep += 1
+                interval = when (rep) {
+                    1 -> 1
+                    2 -> 6
+                    else -> kotlin.math.round(interval * ef).toInt().coerceAtLeast(1)  // 현재 간격 * ef
+                }
+                // ef 변화 없음
+            }
+            else -> { // Easy: 빠르게 진행
+                rep += 1
+                interval = when (rep) {
+                    1 -> 1
+                    2 -> 6
+                    else -> kotlin.math.round(interval * ef * 1.3).toInt().coerceAtLeast(1)  // easyBonus 1.3 적용
+                }
+                ef = (ef + 0.15).coerceAtLeast(1.3)
+            }
         }
 
+        // 다음 복습일 = 오늘 자정 + interval일
+        // 자정 기준으로 계산하는 이유: 같은 날 학습하면 항상 같은 날 재등장하도록
         val nextAt = addDaysAtStartOfDay(System.currentTimeMillis(), interval)
         return Sm2Result(rep, interval, ef, nextAt)
     }
 
-    // [유지] toSm2Q 매핑 동일 — Again=0, Hard=3, Good=4, Easy=5
+    // [유지] toSm2Q 매핑 동일
+    // UI 점수(0~3) → SM-2 q값(0,3,4,5) 변환
+    // Again=0, Hard=3, Good=4, Easy=5
+    // 원래 SM-2는 0~5 연속값이지만 4단계 버튼에 맞춰 4개 값으로 매핑
     private fun toSm2Q(score: Int) = when (score) { 0 -> 0; 1 -> 3; 2 -> 4; else -> 5 }
 
-    // [유지] startOfTodayMillis() 동일 — 오늘 00:00:00(ms) 반환
+    // [유지] startOfTodayMillis() 동일
+    // 기존: StudyActivity.startOfTodayMillis()와 동일
+    // 오늘 00:00:00:000(ms) 반환 — 복습 카드 조회 기준점으로 사용
     private fun startOfTodayMillis(nowMillis: Long): Long {
         val cal = Calendar.getInstance()
         cal.timeInMillis = nowMillis
@@ -288,7 +394,10 @@ class StudyViewModel(application: Application) : AndroidViewModel(application) {
         return cal.timeInMillis
     }
 
-    // [유지] addDaysAtStartOfDay() 동일 — 오늘 자정 + days일 후를 반환
+    // [유지] addDaysAtStartOfDay() 동일
+    // 기존: StudyActivity.addDaysAtStartOfDay()와 동일
+    // 오늘 자정(00:00) 기준으로 days일 후 ms를 반환
+    // 예: interval=1 → 내일 자정, interval=6 → 6일 후 자정
     private fun addDaysAtStartOfDay(nowMillis: Long, days: Int): Long {
         val cal = Calendar.getInstance()
         cal.timeInMillis = startOfTodayMillis(nowMillis)
