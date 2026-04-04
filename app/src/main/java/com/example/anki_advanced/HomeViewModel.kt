@@ -91,6 +91,9 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
             _todayStudied.value = totalStudied  // 오늘 완료 수 갱신
 
             val total = totalStudied + totalDue
+            // 홈 화면 진행률 바의 원본 계산식은 여기다.
+            // 여기서 만든 값이 `todayProgress`가 되고, HomeScreen으로 전달된다.
+            // 따라서 바가 기대와 다르게 보이면 이 계산식을 먼저 확인하면 된다.
             _todayProgress.value = if (total > 0) totalStudied.toFloat() / total.toFloat() else 0f
             // 진도율 = 완료 / (완료 + 남은), 카드가 하나도 없으면 0f
         }

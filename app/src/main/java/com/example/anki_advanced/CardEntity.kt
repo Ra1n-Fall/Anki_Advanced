@@ -3,6 +3,15 @@ package com.example.anki_advanced
 import androidx.room.Entity
 import androidx.room.PrimaryKey
 
+data class CardUi(
+    val id: Long,
+    val front: String,
+    val back: String,
+    val tags: String,
+    var state: Int,
+    var status: Int
+)
+
 const val CARD_NEW = 0
 const val CARD_LEARNING = 1
 const val CARD_REVIEW = 2
