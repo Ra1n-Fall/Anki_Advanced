@@ -173,6 +173,21 @@ fun StudyScreenContent(
 
                 when (uiState) {
                     StudyUiState.QUESTION -> {
+                        // 언두 버튼 — 정답 보기 버튼 바로 위 오른쪽에 배치
+                        if (undoStackSize > 0) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 24.dp)
+                            ) {
+                                TextButton(
+                                    onClick = onUndo,
+                                    modifier = Modifier.align(Alignment.CenterEnd)
+                                ) {
+                                    Text("↩ 되돌리기", color = StOnSurfaceVar, fontSize = 13.sp)
+                                }
+                            }
+                        }
                         Button(
                             onClick = onShowAnswer,
                             enabled = !isLoading,
@@ -191,6 +206,21 @@ fun StudyScreenContent(
                         Spacer(Modifier.height(24.dp))
                     }
                     StudyUiState.ANSWER -> {
+                        // 언두 버튼 — 채점 버튼 행 바로 위 오른쪽에 배치
+                        if (undoStackSize > 0) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 24.dp)
+                            ) {
+                                TextButton(
+                                    onClick = onUndo,
+                                    modifier = Modifier.align(Alignment.CenterEnd)
+                                ) {
+                                    Text("↩ 되돌리기", color = StOnSurfaceVar, fontSize = 13.sp)
+                                }
+                            }
+                        }
                         GradeButtonRow(
                             isLoading = isLoading,
                             onGrade = onGrade,
@@ -261,17 +291,10 @@ private fun StudyTopBar(
             modifier = Modifier.align(Alignment.Center)
         )
 
+        // [변경] 언두 버튼을 TopBar에서 제거 → 정답 보기 / 채점 버튼 바로 위로 이동
+        // 기존: TopBar 오른쪽에 ↩ 버튼 배치
+        // 변경: 정답 보기(QUESTION 상태) / 채점 버튼 행(ANSWER 상태) 바로 위 오른쪽에 배치
         Row(modifier = Modifier.align(Alignment.CenterEnd)) {
-            // 언두 버튼: 스택에 항목이 있고 학습 완료 상태가 아닐 때만 표시
-            // undoStackSize = 0 이면 아직 채점한 카드 없음 → 버튼 숨김
-            // uiState = DONE 이면 학습 완료 화면 → 버튼 숨김 (되돌아갈 카드 없음)
-            if (undoStackSize > 0 && uiState != StudyUiState.DONE) {
-                // ↩ 버튼 클릭 → onUndo() → StudyScreen의 viewModel.undoLast() 호출
-                // → DB 복구 + 이전 카드 화면에 표시
-                TextButton(onClick = onUndo) {
-                    Text("↩", color = StOnSurfaceVar, fontSize = 20.sp)
-                }
-            }
             IconButton(onClick = onBack) {
                 Icon(Icons.Default.Close, contentDescription = "닫기", tint = StOnSurfaceVar)
             }
