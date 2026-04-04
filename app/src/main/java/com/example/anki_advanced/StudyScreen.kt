@@ -24,50 +24,6 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
 
-// ══════════════════════════════════════════════════════════════════
-// ── GradeButton 클릭 연결 흐름 ──
-//
-// isLoading StateFlow를 각 버튼의 disabled 파라미터에 연결하여 버튼 활성화 제어
-//
-// GradeButton 클릭
-//   → { onGrade(0~3) } 람다 실행          (GradeButtonRow에서 주입)
-//     → onGrade(Int) 콜백 호출             (StudyScreenContent에서 받아 그대로 전달)
-//       → { viewModel.applyGrade(it) }     (StudyScreen에서 ViewModel과 최초 연결)
-//         → StudyViewModel.applyGrade(score) 실행
-//
-// StudyScreenContent / GradeButtonRow / GradeButton 은 ViewModel을 전혀 모름
-// 콜백 람다만 받아서 아래로 전달 → ViewModel 없이 Preview 가능한 구조
-//
-// ── 언두 클릭 연결 흐름 ──
-//
-// ↩ 되돌리기 클릭
-//   → onClick = onUndo 람다 실행            (QUESTION/ANSWER 분기 안 TextButton)
-//     → onUndo() 콜백 호출                  (StudyScreenContent에서 받아 그대로 전달)
-//       → { viewModel.undoLast() }          (StudyScreen에서 ViewModel과 최초 연결)
-//         → StudyViewModel.undoLast() 실행
-//           → DB 로그 삭제 + 카드 상태 복구
-//           → _currentCard.value = undo.prevCard  (이전 카드 화면에 복원)
-//           → _uiState.value = QUESTION           (앞면 보기 상태로 복귀)
-//
-// [변경] binding.btnUndo.setOnClickListener { undoLast() } → onUndo 람다 콜백
-// 기존: Activity에서 binding.btnUndo.setOnClickListener로 직접 등록
-// 변경: 람다로 주입 → StudyScreenContent → QUESTION/ANSWER 분기 안 TextButton까지 전달
-//
-// ── onBack 클릭 연결 흐름 ──
-//
-// X 버튼(TopBar) 또는 홈으로 버튼(DoneContent) 클릭
-//   → onClick = onBack 람다 실행            (StudyTopBar의 IconButton / DoneContent의 Button)
-//     → onBack() 콜백 호출                  (StudyScreenContent에서 받아 그대로 전달)
-//       → { navController?.popBackStack() } (StudyScreen에서 NavController와 최초 연결)
-//         → 이전 화면(홈)으로 복귀
-//         → navController?. 의 ? : null-safe 호출
-//           navController가 null(Preview 등)이면 아무것도 하지 않음
-//
-// [변경] finish() / onBackPressed() → navController.popBackStack()
-// 기존: Activity에서 binding.btnClose.setOnClickListener { finish() } 로 직접 종료
-// 변경: 람다로 주입 → StudyScreenContent → TopBar·DoneContent 두 곳에서 공유
-// ══════════════════════════════════════════════════════════════════
-
 // ── 색상 ──
 private val StBg            = Color(0xFFF6F6FA)
 private val StSurfaceLow    = Color(0xFFF0F0F5)
@@ -122,9 +78,40 @@ fun StudyScreen(
         isLoading     = isLoading,
         isFlipped     = isFlipped,
         onShowAnswer  = { isFlipped = true; viewModel.showAnswer() },
+        // ── GradeButton 클릭 연결 흐름 ──
+        // GradeButton 클릭
+        //   → { onGrade(0~3) } 람다 실행          (GradeButtonRow에서 주입)
+        //     → onGrade(Int) 콜백 호출             (StudyScreenContent에서 받아 그대로 전달)
+        //       → { viewModel.applyGrade(it) }     (StudyScreen에서 ViewModel과 최초 연결)
+        //         → StudyViewModel.applyGrade(score) 실행
+        // StudyScreenContent / GradeButtonRow / GradeButton 은 ViewModel을 전혀 모름
+        // 콜백 람다만 받아서 아래로 전달 → ViewModel 없이 Preview 가능한 구조
+        // isLoading StateFlow를 각 버튼의 disabled 파라미터에 연결하여 버튼 활성화 제어
         onGrade       = { viewModel.applyGrade(it) },
+        // ── 언두 클릭 연결 흐름 ──
+        // ↩ 되돌리기 클릭
+        //   → onClick = onUndo 람다 실행            (QUESTION/ANSWER 분기 안 TextButton)
+        //     → onUndo() 콜백 호출                  (StudyScreenContent에서 받아 그대로 전달)
+        //       → { viewModel.undoLast() }          (StudyScreen에서 ViewModel과 최초 연결)
+        //         → StudyViewModel.undoLast() 실행
+        //           → DB 로그 삭제 + 카드 상태 복구
+        //           → _currentCard.value = undo.prevCard  (이전 카드 화면에 복원)
+        //           → _uiState.value = QUESTION           (앞면 보기 상태로 복귀)
+        // [변경] binding.btnUndo.setOnClickListener { undoLast() } → onUndo 람다 콜백
+        // 기존: Activity에서 binding.btnUndo.setOnClickListener로 직접 등록
+        // 변경: 람다로 주입 → StudyScreenContent → QUESTION/ANSWER 분기 안 TextButton까지 전달
         onUndo        = { viewModel.undoLast() },
-        onBack        = { navController?.popBackStack() }  // TopBar X 버튼 / DoneContent 홈으로 버튼 공용
+        // ── onBack 클릭 연결 흐름 ──
+        // X 버튼(TopBar) 또는 홈으로 버튼(DoneContent) 클릭
+        //   → onClick = onBack 람다 실행            (StudyTopBar의 IconButton / DoneContent의 Button)
+        //     → onBack() 콜백 호출                  (StudyScreenContent에서 받아 그대로 전달)
+        //       → { navController?.popBackStack() } (StudyScreen에서 NavController와 최초 연결)
+        //         → 이전 화면(홈)으로 복귀
+        //         → navController?. 의 ? : null-safe — null(Preview 등)이면 아무것도 안 함
+        // [변경] finish() → navController.popBackStack()
+        // 기존: Activity에서 binding.btnClose.setOnClickListener { finish() } 로 직접 종료
+        // 변경: 람다로 주입 → StudyScreenContent → TopBar·DoneContent 두 곳에서 공유
+        onBack        = { navController?.popBackStack() }
     )
 }
 
