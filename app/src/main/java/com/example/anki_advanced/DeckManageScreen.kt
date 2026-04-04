@@ -69,6 +69,13 @@ private val DeckOutline = Color(0xFFACADB1)
 private val DeckError = Color(0xFFB41340)
 private val DeckTag = Color(0xFFE8E9FF)
 
+// ─────────────────────────────────────────────
+// ViewModel 진입점 — NavController, ViewModel 여기서만
+// [변경] DeckManageActivity → DeckManageScreen + DeckManageContent 분리
+// 기존: Activity에서 adapter 콜백 + AlertDialog.Builder로 다이얼로그 직접 생성
+// 변경: ViewModel 진입점(DeckManageScreen)과 순수 UI(DeckManageContent)로 분리
+// 이유: DeckManageContent는 ViewModel 없이 Preview 가능
+// ─────────────────────────────────────────────
 @Composable
 fun DeckManageScreen(
     navController: NavController? = null,
@@ -78,6 +85,9 @@ fun DeckManageScreen(
 ) {
     val uiState by viewModel.uiState.collectAsState()
 
+    // [변경] Activity onCreate의 initialLoadFromDb() → LaunchedEffect(deckId, deckName)
+    // 기존: Activity onCreate에서 intent로 deckId 받아 바로 initialLoadFromDb() 호출
+    // 변경: Compose 생명주기에 맞게 LaunchedEffect로 최초 1회 initialize() 호출
     LaunchedEffect(deckId, deckName) {
         viewModel.initialize(deckId = deckId, deckName = deckName)
     }
@@ -102,6 +112,15 @@ fun DeckManageScreen(
     )
 }
 
+// ─────────────────────────────────────────────
+// 순수 UI — ViewModel 없음, Preview 가능
+// [변경] RecyclerView + CardAdapter → LazyColumn + items()
+// 기존: RecyclerView.layoutManager + adapter.setOnCardMenuActionListener + adapter.notifyItem~
+// 변경: LazyColumn + items(cards, key = { it.id })로 선언적 UI 구성
+// [변경] AlertDialog.Builder → DeckManageUiState 플래그로 Compose AlertDialog 조건부 렌더링
+// 기존: showDeleteDialog(), showEditDialog()에서 AlertDialog.Builder로 직접 생성
+// 변경: uiState.showDeleteDialog / showEditDialog 값에 따라 AlertDialog 조건부 렌더링
+// ─────────────────────────────────────────────
 @Composable
 private fun DeckManageContent(
     uiState: DeckManageUiState,
@@ -261,6 +280,9 @@ private fun DeckManageContent(
     }
 }
 
+// [변경] binding.btnAdd.setOnClickListener → onAdd 람다 콜백
+// 기존: Activity에서 btnAdd.setOnClickListener 직접 등록 후 insertCardAndUpdateUi() 호출
+// 변경: 순수 UI 함수에 onAdd 콜백 주입, 실제 처리는 DeckManageScreen에서 ViewModel에 위임
 @Composable
 private fun DeckManageTopBar(
     deckName: String,
@@ -477,6 +499,10 @@ private fun SectionHeader(
     }
 }
 
+// [변경] CardAdapter.OnCardMenuActionListener → onEdit / onDelete 람다
+// 기존: CardAdapter에 OnCardMenuActionListener 인터페이스 등록,
+//       onMenuAction에서 actionId로 edit/delete 분기
+// 변경: 각 카드 아이템에 onEdit / onDelete 람다 직접 전달
 @Composable
 private fun DeckCardRow(
     card: CardUi,
