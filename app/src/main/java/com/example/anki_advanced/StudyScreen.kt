@@ -52,6 +52,20 @@ import androidx.navigation.NavController
 // [변경] binding.btnUndo.setOnClickListener { undoLast() } → onUndo 람다 콜백
 // 기존: Activity에서 binding.btnUndo.setOnClickListener로 직접 등록
 // 변경: 람다로 주입 → StudyScreenContent → QUESTION/ANSWER 분기 안 TextButton까지 전달
+//
+// ── onBack 클릭 연결 흐름 ──
+//
+// X 버튼(TopBar) 또는 홈으로 버튼(DoneContent) 클릭
+//   → onClick = onBack 람다 실행            (StudyTopBar의 IconButton / DoneContent의 Button)
+//     → onBack() 콜백 호출                  (StudyScreenContent에서 받아 그대로 전달)
+//       → { navController?.popBackStack() } (StudyScreen에서 NavController와 최초 연결)
+//         → 이전 화면(홈)으로 복귀
+//         → navController?. 의 ? : null-safe 호출
+//           navController가 null(Preview 등)이면 아무것도 하지 않음
+//
+// [변경] finish() / onBackPressed() → navController.popBackStack()
+// 기존: Activity에서 binding.btnClose.setOnClickListener { finish() } 로 직접 종료
+// 변경: 람다로 주입 → StudyScreenContent → TopBar·DoneContent 두 곳에서 공유
 // ══════════════════════════════════════════════════════════════════
 
 // ── 색상 ──
@@ -110,7 +124,7 @@ fun StudyScreen(
         onShowAnswer  = { isFlipped = true; viewModel.showAnswer() },
         onGrade       = { viewModel.applyGrade(it) },
         onUndo        = { viewModel.undoLast() },
-        onBack        = { navController?.popBackStack() }
+        onBack        = { navController?.popBackStack() }  // TopBar X 버튼 / DoneContent 홈으로 버튼 공용
     )
 }
 
@@ -304,6 +318,7 @@ private fun StudyTopBar(onBack: () -> Unit) {
         )
 
         Row(modifier = Modifier.align(Alignment.CenterEnd)) {
+            // X 버튼 클릭 → onBack() → { navController?.popBackStack() }
             IconButton(onClick = onBack) {
                 Icon(Icons.Default.Close, contentDescription = "닫기", tint = StOnSurfaceVar)
             }
@@ -486,6 +501,8 @@ private fun DoneContent(modifier: Modifier = Modifier, onBack: () -> Unit) {
         Spacer(Modifier.height(12.dp))
         Text("오늘의 학습을 모두 마쳤습니다.", color = StOnSurfaceVar, fontSize = 15.sp, textAlign = TextAlign.Center)
         Spacer(Modifier.height(48.dp))
+        // 홈으로 버튼 클릭 → onBack() → { navController?.popBackStack() }
+        // TopBar X 버튼과 동일한 onBack 람다 공유
         Button(
             onClick = onBack, modifier = Modifier.fillMaxWidth().height(54.dp),
             colors = ButtonDefaults.buttonColors(containerColor = StPrimary, contentColor = StOnPrimary),
