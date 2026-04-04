@@ -79,9 +79,19 @@ fun StudyScreen(
         isFlipped     = isFlipped,
         onShowAnswer  = { isFlipped = true; viewModel.showAnswer() },
         onGrade       = { viewModel.applyGrade(it) },
+        // ── 언두 클릭 연결 흐름 ──
+        // ↩ 되돌리기 클릭
+        //   → onClick = onUndo 람다 실행            (QUESTION/ANSWER 분기 안 TextButton)
+        //     → onUndo(Int) 콜백 호출               (StudyScreenContent에서 받아 그대로 전달)
+        //       → { viewModel.undoLast() }          (StudyScreen에서 ViewModel과 최초 연결)
+        //         → StudyViewModel.undoLast() 실행
+        //           → DB 로그 삭제 + 카드 상태 복구
+        //           → _currentCard.value = undo.prevCard  (이전 카드 화면에 복원)
+        //           → _uiState.value = QUESTION           (앞면 보기 상태로 복귀)
+        //
         // [변경] binding.btnUndo.setOnClickListener { undoLast() } → onUndo 람다 콜백
         // 기존: Activity에서 binding.btnUndo.setOnClickListener로 직접 등록
-        // 변경: 람다로 주입 → StudyTopBar까지 onUndo로 전달되어 ↩ 버튼 클릭 시 호출
+        // 변경: 람다로 주입 → StudyScreenContent → QUESTION/ANSWER 분기 안 TextButton까지 전달
         onUndo        = { viewModel.undoLast() },
         onBack        = { navController?.popBackStack() }
     )
@@ -174,6 +184,8 @@ fun StudyScreenContent(
                 when (uiState) {
                     StudyUiState.QUESTION -> {
                         // 언두 버튼 — 정답 보기 버튼 바로 위 오른쪽에 배치
+                        // undoStackSize = 0 이면 아직 채점한 카드 없음 → 버튼 미렌더링
+                        // undoStackSize > 0 이면 클릭 → onUndo() → viewModel.undoLast()
                         if (undoStackSize > 0) {
                             Box(
                                 modifier = Modifier
@@ -181,7 +193,7 @@ fun StudyScreenContent(
                                     .padding(horizontal = 24.dp)
                             ) {
                                 TextButton(
-                                    onClick = onUndo,
+                                    onClick = onUndo,  // StudyScreen에서 주입된 { viewModel.undoLast() }
                                     modifier = Modifier.align(Alignment.CenterEnd)
                                 ) {
                                     Text("↩ 되돌리기", color = StOnSurfaceVar, fontSize = 13.sp)
@@ -207,6 +219,8 @@ fun StudyScreenContent(
                     }
                     StudyUiState.ANSWER -> {
                         // 언두 버튼 — 채점 버튼 행 바로 위 오른쪽에 배치
+                        // ANSWER 상태에서도 동일한 onUndo 람다 사용
+                        // 정답을 본 뒤 채점 전에도 이전 카드로 되돌릴 수 있음
                         if (undoStackSize > 0) {
                             Box(
                                 modifier = Modifier
@@ -214,7 +228,7 @@ fun StudyScreenContent(
                                     .padding(horizontal = 24.dp)
                             ) {
                                 TextButton(
-                                    onClick = onUndo,
+                                    onClick = onUndo,  // StudyScreen에서 주입된 { viewModel.undoLast() }
                                     modifier = Modifier.align(Alignment.CenterEnd)
                                 ) {
                                     Text("↩ 되돌리기", color = StOnSurfaceVar, fontSize = 13.sp)
@@ -250,16 +264,7 @@ fun StudyScreenContent(
     }
 }
 
-// ── 상단 바 ──
-// [변경] 언두 버튼 처리 방식 전면 변경
-// 기존: binding.btnUndo 는 레이아웃 XML에 별도 버튼으로 존재
-//       applyUiState() 안에서 상태별로 visibility를 직접 설정:
-//         QUESTION → undoStack.isEmpty() 이면 GONE, 아니면 VISIBLE
-//         ANSWER   → undoStack.isEmpty() 이면 GONE, 아니면 VISIBLE
-//         DONE     → 항상 GONE (완료 화면에서 언두 버튼 숨기기)
-// 변경: StudyTopBar 안에 언두 버튼을 포함
-//       undoStackSize > 0 && uiState != DONE 조건을 if문 하나로 처리
-//       → 기존의 3가지 상태 × 2가지 조건 분기를 단순화
+
 @Composable
 private fun StudyTopBar(
     undoStackSize: Int,
@@ -411,9 +416,8 @@ private fun BackFace(card: CardEntity?, modifier: Modifier = Modifier) {
 }
 
 // ── 채점 버튼 행 ──
-// [변경] setButtonsEnabled() 제거 → isLoading으로 버튼 비활성화
-// 기존: setButtonsEnabled(false/true)로 btnAgain/btnHard/btnGood/btnEasy 6개 직접 제어
-// 변경: isLoading StateFlow를 각 버튼의 disabled 파라미터에 연결
+
+// isLoading StateFlow를 각 버튼의 disabled 파라미터에 연결하여 버튼 활성화 제어
 //
 // ── 클릭 연결 흐름 ──
 // GradeButton 클릭
@@ -437,9 +441,7 @@ private fun GradeButtonRow(isLoading: Boolean, onGrade: (Int) -> Unit, modifier:
     }
 }
 
-// label    : 버튼 중앙 텍스트 — "다시", "어려움", "좋음", "쉬움"
-// timeHint : 버튼 상단 작은 텍스트 — "1분", "2일", "4일", "7일"
-// color    : 버튼 고유 색상 — Again=빨강, Hard=주황, Good=파랑, Easy=초록
+
 // disabled : true이면 버튼 비활성화 (isLoading 값이 들어옴)
 // onClick  : 클릭 시 실행할 람다 — GradeButtonRow에서 { onGrade(n) } 이 주입됨
 @Composable
@@ -460,18 +462,13 @@ private fun GradeButton(
             disabledContentColor   = color.copy(alpha = 0.4f)        // 비활성 텍스트 (흐리게)
             // enabled = false 이면 자동으로 disabled~ 색상으로 교체됨
         ),
-        shape = RoundedCornerShape(24.dp), // 모서리 24dp — CircleShape보다 살짝 덜 둥근 모양
+        shape = RoundedCornerShape(24.dp),
         contentPadding = PaddingValues(4.dp),
-        // 기본 내부 여백(수평 24dp)을 4dp로 줄임 → Column 내용이 잘리지 않도록
+
         elevation = ButtonDefaults.buttonElevation(0.dp, 0.dp, 0.dp)
-        // 기본/눌림/포커스 모두 그림자 제거 → 배경색만으로 구분하는 플랫 디자인
+
     ) {
-        // 버튼 내부 세로 구조:
-        //  ┌─────────────┐
-        //  │  "1분"       │  ← timeHint: 10sp, alpha 0.6 흐린 회색 (보조 정보)
-        //  │  "다시"      │  ← label:    13sp, 난이도 고유 색상 (메인 텍스트)
-        //  │   ●          │  ← 원형 도트 6dp, 난이도 색상 25% 투명도 (장식용)
-        //  └─────────────┘
+
         Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
             Text(timeHint, fontSize = 10.sp, fontWeight = FontWeight.Bold, color = StOnSurfaceVar.copy(alpha = 0.6f))
             // alpha = 0.6 → 흐리게 처리해 보조 정보임을 시각적으로 표현
@@ -480,8 +477,7 @@ private fun GradeButton(
             // 난이도 고유 색상 그대로 → 각 버튼을 색으로 구분
             Spacer(Modifier.height(4.dp))
             Box(modifier = Modifier.size(6.dp).background(color.copy(alpha = 0.25f), CircleShape))
-            // 작은 원형 도트 — 순수 장식용
-            // alpha = 0.25 → 텍스트보다 훨씬 연하게
+
         }
     }
 }
