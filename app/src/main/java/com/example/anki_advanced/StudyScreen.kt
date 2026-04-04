@@ -42,6 +42,10 @@ private val StEasy          = Color(0xFF4CAF50)
 
 // ─────────────────────────────────────────────
 // ViewModel 진입점 — NavController, ViewModel 여기서만
+// [변경] StudyActivity → StudyScreen + StudyScreenContent 분리
+// 기존: Activity 한 클래스 안에 UI 코드(binding.*)와 로직(applyGrade 등) 혼재
+// 변경: ViewModel 진입점(StudyScreen)과 순수 UI(StudyScreenContent)로 분리
+// 이유: StudyScreenContent는 ViewModel 없이 Preview 가능
 // ─────────────────────────────────────────────
 @Composable
 fun StudyScreen(
@@ -56,7 +60,11 @@ fun StudyScreen(
     val isLoading     by viewModel.isLoading.collectAsState()
 
     var isFlipped by remember { mutableStateOf(false) }
+    // [변경] refreshCardText() 제거 → 카드 바뀔 때 isFlipped 자동 리셋
+    // 기존: currentCard 교체 후 refreshCardText()로 binding.tvFront/tvBack.text 직접 갱신
+    // 변경: currentCard StateFlow 변경 시 Compose가 자동 재구성, 플립 상태만 초기화
     LaunchedEffect(currentCard) { isFlipped = false }
+    // [변경] Activity onCreate 직접 호출 → LaunchedEffect로 최초 1회 startStudy() 호출
     LaunchedEffect(deckId)      { viewModel.startStudy(deckId) }
 
     StudyScreenContent(
@@ -74,6 +82,10 @@ fun StudyScreen(
 
 // ─────────────────────────────────────────────
 // 순수 UI — ViewModel 없음, Preview 가능
+// [변경] applyUiState() 제거 → when(uiState) 분기로 Compose가 자동 처리
+// 기존: applyUiState()에서 모든 View의 visibility를 직접 제어
+//       (tvFront, tvBack, btnShowAnswer, layoutGrade, btnUndo, layoutDone)
+// 변경: uiState 값에 따라 Compose의 when 분기가 자동으로 UI 구성
 // ─────────────────────────────────────────────
 @Composable
 fun StudyScreenContent(
@@ -122,6 +134,10 @@ fun StudyScreenContent(
                 Spacer(Modifier.weight(1f))
 
                 // 플래시카드 (플립)
+                // [변경] binding.tvFront/tvBack.visibility 토글 → Y축 회전 플립 애니메이션으로 교체
+                // 기존: showCard()에서 binding.tvBack.visibility = VISIBLE
+                // 변경: graphicsLayer { rotationY }로 카드 플립 구현
+                //       rotation <= 90f 이면 앞면(FrontFace), 초과 시 뒷면(BackFace) 렌더링
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -191,6 +207,9 @@ fun StudyScreenContent(
 }
 
 // ── 상단 바 ──
+// [변경] binding.btnUndo.visibility 직접 제어 → undoStackSize > 0 && uiState != DONE 조건부 렌더링
+// 기존: applyUiState() 안에서 undoStack.isEmpty() 확인 후 binding.btnUndo.visibility 직접 설정
+// 변경: undoStackSize StateFlow를 Screen이 구독해서 조건부 렌더링
 @Composable
 private fun StudyTopBar(
     undoStackSize: Int,
@@ -344,6 +363,9 @@ private fun BackFace(card: CardEntity?, modifier: Modifier = Modifier) {
 }
 
 // ── 채점 버튼 행 ──
+// [변경] setButtonsEnabled() 제거 → isLoading으로 버튼 비활성화
+// 기존: setButtonsEnabled(false/true)로 btnAgain/btnHard/btnGood/btnEasy/btnShowAnswer/btnUndo 6개 직접 제어
+// 변경: isLoading StateFlow를 각 버튼의 enabled 파라미터에 연결
 @Composable
 private fun GradeButtonRow(isLoading: Boolean, onGrade: (Int) -> Unit, modifier: Modifier = Modifier) {
     Row(modifier = modifier, horizontalArrangement = Arrangement.spacedBy(8.dp)) {

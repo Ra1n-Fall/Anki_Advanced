@@ -36,6 +36,10 @@ private val DmError         = Color(0xFFB41340)
 
 // ─────────────────────────────────────────────
 // ViewModel 진입점 — NavController, ViewModel 여기서만
+// [변경] DeckManageActivity → DeckManageScreen + DeckManageContent 분리
+// 기존: Activity에서 adapter 콜백 + AlertDialog.Builder로 다이얼로그 직접 생성
+// 변경: ViewModel 진입점(DeckManageScreen)과 순수 UI(DeckManageContent)로 분리
+// 이유: DeckManageContent는 ViewModel 없이 Preview 가능
 // ─────────────────────────────────────────────
 @Composable
 fun DeckManageScreen(
@@ -50,6 +54,9 @@ fun DeckManageScreen(
     var backText  by remember { mutableStateOf("") }
     var tagsText  by remember { mutableStateOf("") }
 
+    // [변경] AlertDialog.Builder → Compose AlertDialog 조건부 렌더링
+    // 기존: showDeleteDialog(), showEditDialog()에서 AlertDialog.Builder로 직접 생성
+    // 변경: showDeleteDialog / showEditDialog 상태 플래그로 Compose AlertDialog 조건부 렌더링
     var showDeleteDialog by remember { mutableStateOf(false) }
     var cardToDelete     by remember { mutableStateOf<CardUi?>(null) }
     var showEditDialog   by remember { mutableStateOf(false) }
@@ -58,6 +65,9 @@ fun DeckManageScreen(
     var editBack         by remember { mutableStateOf("") }
     var editTags         by remember { mutableStateOf("") }
 
+    // [변경] Activity onCreate의 initialLoadFromDb() → LaunchedEffect(deckId)
+    // 기존: Activity onCreate에서 initialLoadFromDb() 직접 호출
+    // 변경: Compose 생명주기에 맞게 LaunchedEffect로 최초 1회 로딩
     LaunchedEffect(deckId) { viewModel.loadCards(deckId) }
 
     DeckManageContent(
@@ -110,6 +120,9 @@ fun DeckManageScreen(
 
 // ─────────────────────────────────────────────
 // 순수 UI — ViewModel 없음, Preview 가능
+// [변경] RecyclerView + CardAdapter → LazyColumn + items()
+// 기존: RecyclerView.layoutManager + adapter.setOnCardMenuActionListener + adapter.notifyItem~
+// 변경: LazyColumn + items(cards, key = { it.id })로 선언적 UI 구성
 // ─────────────────────────────────────────────
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -243,6 +256,9 @@ fun DeckManageContent(
 }
 
 // ── 카드 추가 폼 ──
+// [변경] binding.btnAdd.setOnClickListener → onAdd 람다 콜백
+// 기존: Activity에서 btnAdd.setOnClickListener 직접 등록 후 insertCardAndUpdateUi() 호출
+// 변경: 순수 UI 함수에 onAdd 콜백 주입, 실제 처리는 DeckManageScreen에서 ViewModel에 위임
 @Composable
 private fun AddCardForm(
     frontText: String, backText: String, tagsText: String,
@@ -302,6 +318,10 @@ private fun DmTextField(value: String, label: String, onChange: (String) -> Unit
 }
 
 // ── 카드 아이템 ──
+// [변경] CardAdapter.OnCardMenuActionListener → onEdit / onDelete 람다
+// 기존: CardAdapter에 OnCardMenuActionListener 인터페이스 등록,
+//       onMenuAction에서 actionId로 edit/delete 분기
+// 변경: 각 카드 아이템에 onEdit / onDelete 람다 직접 전달
 @Composable
 private fun CardManageItem(card: CardUi, onEdit: () -> Unit, onDelete: () -> Unit) {
     val statusLabel = when (card.status) {
