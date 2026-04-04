@@ -56,6 +56,10 @@ fun StudyScreen(
 ) {
     val uiState       by viewModel.uiState.collectAsState()
     val currentCard   by viewModel.currentCard.collectAsState()
+    // [변경] binding.btnUndo.visibility 직접 제어 → undoStackSize StateFlow 구독
+    // 기존: undoStack.isEmpty() 확인 후 binding.btnUndo.visibility = VISIBLE/GONE 직접 설정
+    // 변경: undoStackSize를 StateFlow로 노출 → Screen이 구독해서 조건부 렌더링
+    //       undoStackSize > 0 이면 StudyTopBar에 언두 버튼(↩) 표시
     val undoStackSize by viewModel.undoStackSize.collectAsState()
     val isLoading     by viewModel.isLoading.collectAsState()
 
@@ -70,11 +74,14 @@ fun StudyScreen(
     StudyScreenContent(
         uiState       = uiState,
         currentCard   = currentCard,
-        undoStackSize = undoStackSize,
+        undoStackSize = undoStackSize,  // 언두 버튼 표시 여부 결정용
         isLoading     = isLoading,
         isFlipped     = isFlipped,
         onShowAnswer  = { isFlipped = true; viewModel.showAnswer() },
         onGrade       = { viewModel.applyGrade(it) },
+        // [변경] binding.btnUndo.setOnClickListener { undoLast() } → onUndo 람다 콜백
+        // 기존: Activity에서 binding.btnUndo.setOnClickListener로 직접 등록
+        // 변경: 람다로 주입 → StudyTopBar까지 onUndo로 전달되어 ↩ 버튼 클릭 시 호출
         onUndo        = { viewModel.undoLast() },
         onBack        = { navController?.popBackStack() }
     )
@@ -99,6 +106,11 @@ fun StudyScreenContent(
     onUndo: () -> Unit,
     onBack: () -> Unit
 ) {
+//
+//    isFlipped가 false → true로 변경되면
+//    targetValue가 0f → 180f로 변경
+//    400ms 동안 targetValue 값이 0에서 180으로 부드럽게 증가
+//    리컴포지션마다 by키워드로 state.value 즉, rotation = targetValue
     val rotation by animateFloatAsState(
         targetValue = if (isFlipped) 180f else 0f,
         animationSpec = tween(durationMillis = 400),
@@ -117,7 +129,7 @@ fun StudyScreenContent(
         containerColor = StBg
     ) { innerPadding ->
         when (uiState) {
-            StudyUiState.DONE -> DoneContent(
+            StudyUiState.DONE -> DoneContent(//학습완료 화면 띄우기
                 modifier = Modifier.fillMaxSize().padding(innerPadding),
                 onBack = onBack
             )
@@ -146,11 +158,13 @@ fun StudyScreenContent(
                         .graphicsLayer { rotationY = rotation; cameraDistance = 12f * density }
                 ) {
                     if (rotation <= 90f) {
-                        FrontFace(card = currentCard)
-                    } else {
+                        FrontFace(card = currentCard)   // 0° ~ 90° : 앞면 표시
+                    } else {                            // 90° ~ 180° : 뒷면 표시
                         BackFace(
                             card = currentCard,
                             modifier = Modifier.graphicsLayer { rotationY = 180f }
+                            // 뒷면은 이미 180° 회전된 상태에서 렌더링되므로
+                            // 추가로 180° 더 돌려서 텍스트가 거울 반전되지 않도록 보정
                         )
                     }
                 }
@@ -207,9 +221,15 @@ fun StudyScreenContent(
 }
 
 // ── 상단 바 ──
-// [변경] binding.btnUndo.visibility 직접 제어 → undoStackSize > 0 && uiState != DONE 조건부 렌더링
-// 기존: applyUiState() 안에서 undoStack.isEmpty() 확인 후 binding.btnUndo.visibility 직접 설정
-// 변경: undoStackSize StateFlow를 Screen이 구독해서 조건부 렌더링
+// [변경] 언두 버튼 처리 방식 전면 변경
+// 기존: binding.btnUndo 는 레이아웃 XML에 별도 버튼으로 존재
+//       applyUiState() 안에서 상태별로 visibility를 직접 설정:
+//         QUESTION → undoStack.isEmpty() 이면 GONE, 아니면 VISIBLE
+//         ANSWER   → undoStack.isEmpty() 이면 GONE, 아니면 VISIBLE
+//         DONE     → 항상 GONE (완료 화면에서 언두 버튼 숨기기)
+// 변경: StudyTopBar 안에 언두 버튼을 포함
+//       undoStackSize > 0 && uiState != DONE 조건을 if문 하나로 처리
+//       → 기존의 3가지 상태 × 2가지 조건 분기를 단순화
 @Composable
 private fun StudyTopBar(
     undoStackSize: Int,
@@ -242,7 +262,12 @@ private fun StudyTopBar(
         )
 
         Row(modifier = Modifier.align(Alignment.CenterEnd)) {
+            // 언두 버튼: 스택에 항목이 있고 학습 완료 상태가 아닐 때만 표시
+            // undoStackSize = 0 이면 아직 채점한 카드 없음 → 버튼 숨김
+            // uiState = DONE 이면 학습 완료 화면 → 버튼 숨김 (되돌아갈 카드 없음)
             if (undoStackSize > 0 && uiState != StudyUiState.DONE) {
+                // ↩ 버튼 클릭 → onUndo() → StudyScreen의 viewModel.undoLast() 호출
+                // → DB 복구 + 이전 카드 화면에 표시
                 TextButton(onClick = onUndo) {
                     Text("↩", color = StOnSurfaceVar, fontSize = 20.sp)
                 }
