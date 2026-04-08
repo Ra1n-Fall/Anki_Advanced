@@ -78,39 +78,8 @@ fun StudyScreen(
         isLoading     = isLoading,
         isFlipped     = isFlipped,
         onShowAnswer  = { isFlipped = true; viewModel.showAnswer() },
-        // ── GradeButton 클릭 연결 흐름 ──
-        // GradeButton 클릭
-        //   → { onGrade(0~3) } 람다 실행          (GradeButtonRow에서 주입)
-        //     → onGrade(Int) 콜백 호출             (StudyScreenContent에서 받아 그대로 전달)
-        //       → { viewModel.applyGrade(it) }     (StudyScreen에서 ViewModel과 최초 연결)
-        //         → StudyViewModel.applyGrade(score) 실행
-        // StudyScreenContent / GradeButtonRow / GradeButton 은 ViewModel을 전혀 모름
-        // 콜백 람다만 받아서 아래로 전달 → ViewModel 없이 Preview 가능한 구조
-        // isLoading StateFlow를 각 버튼의 disabled 파라미터에 연결하여 버튼 활성화 제어
         onGrade       = { viewModel.applyGrade(it) },
-        // ── 언두 클릭 연결 흐름 ──
-        // ↩ 되돌리기 클릭
-        //   → onClick = onUndo 람다 실행            (QUESTION/ANSWER 분기 안 TextButton)
-        //     → onUndo() 콜백 호출                  (StudyScreenContent에서 받아 그대로 전달)
-        //       → { viewModel.undoLast() }          (StudyScreen에서 ViewModel과 최초 연결)
-        //         → StudyViewModel.undoLast() 실행
-        //           → DB 로그 삭제 + 카드 상태 복구
-        //           → _currentCard.value = undo.prevCard  (이전 카드 화면에 복원)
-        //           → _uiState.value = QUESTION           (앞면 보기 상태로 복귀)
-        // [변경] binding.btnUndo.setOnClickListener { undoLast() } → onUndo 람다 콜백
-        // 기존: Activity에서 binding.btnUndo.setOnClickListener로 직접 등록
-        // 변경: 람다로 주입 → StudyScreenContent → QUESTION/ANSWER 분기 안 TextButton까지 전달
         onUndo        = { viewModel.undoLast() },
-        // ── onBack 클릭 연결 흐름 ──
-        // X 버튼(TopBar) 또는 홈으로 버튼(DoneContent) 클릭
-        //   → onClick = onBack 람다 실행            (StudyTopBar의 IconButton / DoneContent의 Button)
-        //     → onBack() 콜백 호출                  (StudyScreenContent에서 받아 그대로 전달)
-        //       → { navController?.popBackStack() } (StudyScreen에서 NavController와 최초 연결)
-        //         → 이전 화면(홈)으로 복귀
-        //         → navController?. 의 ? : null-safe — null(Preview 등)이면 아무것도 안 함
-        // [변경] finish() → navController.popBackStack()
-        // 기존: Activity에서 binding.btnClose.setOnClickListener { finish() } 로 직접 종료
-        // 변경: 람다로 주입 → StudyScreenContent → TopBar·DoneContent 두 곳에서 공유
         onBack        = { navController?.popBackStack() }
     )
 }
@@ -121,6 +90,30 @@ fun StudyScreen(
 // 기존: applyUiState()에서 모든 View의 visibility를 직접 제어
 //       (tvFront, tvBack, btnShowAnswer, layoutGrade, btnUndo, layoutDone)
 // 변경: uiState 값에 따라 Compose의 when 분기가 자동으로 UI 구성
+//
+// ── onShowAnswer 클릭 연결 흐름 ──
+// 정답 보기 버튼 클릭
+//   → onClick = onShowAnswer 람다 실행      (QUESTION 분기 안 Button)
+//     → onShowAnswer() 콜백 호출            (StudyScreenContent에서 받아 실행)
+//       → { isFlipped = true; viewModel.showAnswer() }  (StudyScreen에서 연결)
+//         → isFlipped = true  → animateFloatAsState 트리거 → 카드 플립 애니메이션 시작
+//         → viewModel.showAnswer() → _uiState.value = ANSWER → 채점 버튼 표시
+// [변경] binding.btnShowAnswer.setOnClickListener → onShowAnswer 람다 콜백
+// 기존: Activity에서 binding.btnShowAnswer.setOnClickListener { showAnswer() } 직접 등록
+// 변경: 람다로 주입 → StudyScreenContent → QUESTION 분기 안 Button까지 전달
+//
+// ── 언두 클릭 연결 흐름 ──
+// ↩ 되돌리기 클릭
+//   → onClick = onUndo 람다 실행            (QUESTION/ANSWER 분기 안 TextButton)
+//     → onUndo() 콜백 호출                  (StudyScreenContent에서 받아 그대로 전달)
+//       → { viewModel.undoLast() }          (StudyScreen에서 ViewModel과 최초 연결)
+//         → StudyViewModel.undoLast() 실행
+//           → DB 로그 삭제 + 카드 상태 복구
+//           → _currentCard.value = undo.prevCard  (이전 카드 화면에 복원)
+//           → _uiState.value = QUESTION           (앞면 보기 상태로 복귀)
+// [변경] binding.btnUndo.setOnClickListener { undoLast() } → onUndo 람다 콜백
+// 기존: Activity에서 binding.btnUndo.setOnClickListener로 직접 등록
+// 변경: 람다로 주입 → StudyScreenContent → QUESTION/ANSWER 분기 안 TextButton까지 전달
 // ─────────────────────────────────────────────
 @Composable
 fun StudyScreenContent(
@@ -196,9 +189,7 @@ fun StudyScreenContent(
 
                 when (uiState) {
                     StudyUiState.QUESTION -> {
-                        // 언두 버튼 — 정답 보기 버튼 바로 위 오른쪽에 배치
-                        // undoStackSize = 0 이면 아직 채점한 카드 없음 → 버튼 미렌더링
-                        // undoStackSize > 0 이면 클릭 → onUndo() → viewModel.undoLast()
+                        // undoStackSize = 0: 아직 채점한 카드 없음 → 버튼 미렌더링
                         if (undoStackSize > 0) {
                             Box(
                                 modifier = Modifier
@@ -206,7 +197,7 @@ fun StudyScreenContent(
                                     .padding(horizontal = 24.dp)
                             ) {
                                 TextButton(
-                                    onClick = onUndo,  // StudyScreen에서 주입된 { viewModel.undoLast() }
+                                    onClick = onUndo,
                                     modifier = Modifier.align(Alignment.CenterEnd)
                                 ) {
                                     Text("↩ 되돌리기", color = StOnSurfaceVar, fontSize = 13.sp)
@@ -231,9 +222,7 @@ fun StudyScreenContent(
                         Spacer(Modifier.height(24.dp))
                     }
                     StudyUiState.ANSWER -> {
-                        // 언두 버튼 — 채점 버튼 행 바로 위 오른쪽에 배치
-                        // ANSWER 상태에서도 동일한 onUndo 람다 사용
-                        // 정답을 본 뒤 채점 전에도 이전 카드로 되돌릴 수 있음
+                        // 정답을 본 뒤 채점 전에도 되돌릴 수 있음 — QUESTION과 동일한 onUndo 람다
                         if (undoStackSize > 0) {
                             Box(
                                 modifier = Modifier
@@ -241,7 +230,7 @@ fun StudyScreenContent(
                                     .padding(horizontal = 24.dp)
                             ) {
                                 TextButton(
-                                    onClick = onUndo,  // StudyScreen에서 주입된 { viewModel.undoLast() }
+                                    onClick = onUndo,
                                     modifier = Modifier.align(Alignment.CenterEnd)
                                 ) {
                                     Text("↩ 되돌리기", color = StOnSurfaceVar, fontSize = 13.sp)
@@ -278,6 +267,16 @@ fun StudyScreenContent(
 }
 
 
+// ── onBack 클릭 연결 흐름 ──
+// X 버튼(TopBar) 또는 홈으로 버튼(DoneContent) 클릭
+//   → onClick = onBack 람다 실행            (StudyTopBar의 IconButton / DoneContent의 Button)
+//     → onBack() 콜백 호출                  (StudyScreenContent에서 받아 그대로 전달)
+//       → { navController?.popBackStack() } (StudyScreen에서 NavController와 최초 연결)
+//         → 이전 화면(홈)으로 복귀
+//         → navController?. 의 ? : null-safe — null(Preview 등)이면 아무것도 안 함
+// [변경] finish() → navController.popBackStack()
+// 기존: Activity에서 binding.btnClose.setOnClickListener { finish() } 로 직접 종료
+// 변경: 람다로 주입 → StudyScreenContent → TopBar·DoneContent 두 곳에서 공유
 @Composable
 private fun StudyTopBar(onBack: () -> Unit) {
     Box(
@@ -305,7 +304,6 @@ private fun StudyTopBar(onBack: () -> Unit) {
         )
 
         Row(modifier = Modifier.align(Alignment.CenterEnd)) {
-            // X 버튼 클릭 → onBack() → { navController?.popBackStack() }
             IconButton(onClick = onBack) {
                 Icon(Icons.Default.Close, contentDescription = "닫기", tint = StOnSurfaceVar)
             }
@@ -422,6 +420,15 @@ private fun BackFace(card: CardEntity?, modifier: Modifier = Modifier) {
 }
 
 // ── 채점 버튼 행 ──
+// ── GradeButton 클릭 연결 흐름 ──
+// GradeButton 클릭
+//   → { onGrade(0~3) } 람다 실행          (GradeButtonRow에서 주입)
+//     → onGrade(Int) 콜백 호출             (StudyScreenContent에서 받아 그대로 전달)
+//       → { viewModel.applyGrade(it) }     (StudyScreen에서 ViewModel과 최초 연결)
+//         → StudyViewModel.applyGrade(score) 실행
+// StudyScreenContent / GradeButtonRow / GradeButton 은 ViewModel을 전혀 모름
+// 콜백 람다만 받아서 아래로 전달 → ViewModel 없이 Preview 가능한 구조
+// isLoading StateFlow를 각 버튼의 disabled 파라미터에 연결하여 버튼 활성화 제어
 @Composable
 private fun GradeButtonRow(isLoading: Boolean, onGrade: (Int) -> Unit, modifier: Modifier = Modifier) {
     // weight(1f) 4개 → Row 너비를 4등분해서 각 버튼이 동일한 폭 차지
@@ -488,8 +495,6 @@ private fun DoneContent(modifier: Modifier = Modifier, onBack: () -> Unit) {
         Spacer(Modifier.height(12.dp))
         Text("오늘의 학습을 모두 마쳤습니다.", color = StOnSurfaceVar, fontSize = 15.sp, textAlign = TextAlign.Center)
         Spacer(Modifier.height(48.dp))
-        // 홈으로 버튼 클릭 → onBack() → { navController?.popBackStack() }
-        // TopBar X 버튼과 동일한 onBack 람다 공유
         Button(
             onClick = onBack, modifier = Modifier.fillMaxWidth().height(54.dp),
             colors = ButtonDefaults.buttonColors(containerColor = StPrimary, contentColor = StOnPrimary),
