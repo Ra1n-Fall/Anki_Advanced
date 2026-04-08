@@ -53,6 +53,22 @@ interface ReviewLogDao {
     suspend fun countReviewCardsToday(deckId: Long, todayStart: Long): Int
     // 오늘 학습한 review 카드 수
 
+    @Query("SELECT MAX(reviewedAt) FROM review_logs WHERE deckId = :deckId")
+    suspend fun getLastStudied(deckId: Long): Long?
+    // 특정 덱의 마지막 학습 시각 (ms), 학습 기록 없으면 null
+
+    @Query("SELECT COUNT(*) FROM review_logs")
+    suspend fun countAll(): Int
+    // 전체 누적 학습 카드 수
+
+    @Query("""
+        SELECT DISTINCT (reviewedAt / 86400000) as dayKey
+        FROM review_logs
+        ORDER BY dayKey DESC
+    """)
+    suspend fun getAllStudyDayKeys(): List<Long>
+    // 학습한 날짜의 day key (ms / 86400000) 목록 — 연속 스트릭 계산용
+
 }
 
 

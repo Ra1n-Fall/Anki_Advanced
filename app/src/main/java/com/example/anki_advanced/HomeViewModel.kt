@@ -42,6 +42,14 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
     private val _todayProgress = MutableStateFlow(0f)
     val todayProgress: StateFlow<Float> = _todayProgress.asStateFlow()
 
+    // 전체 누적 학습 카드 수 — QuickStats "총 암기한 카드" 표시용
+    private val _totalCards = MutableStateFlow(0)
+    val totalCards: StateFlow<Int> = _totalCards.asStateFlow()
+
+    // 연속 학습 스트릭 (일) — QuickStats "연속 학습 스트릭" 표시용
+    private val _streakDays = MutableStateFlow(0)
+    val streakDays: StateFlow<Int> = _streakDays.asStateFlow()
+
     // [변경] isFirstLoad 플래그 제거 → init 블록으로 대체
     // 기존: onResume()에서 isFirstLoad 플래그로 onCreate 중복 호출 방지
     //       private var isFirstLoad = true
@@ -79,16 +87,26 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
                 val studied = withContext(Dispatchers.IO) {
                     db.reviewLogDao().countToday(e.id, todayStart, now) // 이 덱의 오늘 완료 카드 수
                 }
+                val lastStudiedAt = withContext(Dispatchers.IO) {
+                    db.reviewLogDao().getLastStudied(e.id) // 이 덱의 마지막 학습 시각
+                }
 
                 totalStudied += studied                          // 전체 완료 수에 누적
                 totalDue += newCount + learnCount + reviewCount  // 전체 남은 수에 누적
 
-                DeckUi(e.id, e.name, newCount, learnCount, reviewCount)
+                DeckUi(e.id, e.name, newCount, learnCount, reviewCount, lastStudiedAt)
                 // 이 줄이 이 덱의 변환 결과 → map이 모아서 List<DeckUi>로 만듦
             }
 
             _decks.value = deckUiList        // 덱 목록 갱신 → HomeScreen 자동 재구성
             _todayStudied.value = totalStudied  // 오늘 완료 수 갱신
+
+            // 전체 누적 학습 카드 수
+            _totalCards.value = withContext(Dispatchers.IO) { db.reviewLogDao().countAll() }
+
+            // 연속 학습 스트릭 계산
+            val dayKeys = withContext(Dispatchers.IO) { db.reviewLogDao().getAllStudyDayKeys() }
+            _streakDays.value = calculateStreak(dayKeys)
 
             val total = totalStudied + totalDue
             // 홈 화면 진행률 바의 원본 계산식은 여기다.
@@ -126,6 +144,27 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
             }
             loadDecks() // 목록 새로 불러와서 화면 갱신
         }
+    }
+
+    // 연속 학습 스트릭 계산
+    // dayKeys: 학습한 날짜의 day key (ms / 86400000) 목록 — DESC 정렬
+    // 오늘 또는 어제부터 시작해서 연속된 날 수를 반환
+    private fun calculateStreak(dayKeys: List<Long>): Int {
+        if (dayKeys.isEmpty()) return 0
+        val todayKey = System.currentTimeMillis() / 86_400_000L
+        // 오늘 학습했으면 오늘부터, 아니면 어제부터 카운트
+        val start = if (dayKeys.first() == todayKey) todayKey else todayKey - 1
+        var streak = 0
+        var expected = start
+        for (dayKey in dayKeys) {
+            if (dayKey == expected) {
+                streak++
+                expected--
+            } else {
+                break
+            }
+        }
+        return streak
     }
 
     // [유지] startOfTodayMillis()

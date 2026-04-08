@@ -74,6 +74,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontWeight
@@ -193,6 +194,8 @@ fun HomeScreen(
     val decks         by viewModel.decks.collectAsState()          // 덱 목록
     val todayProgress by viewModel.todayProgress.collectAsState()  // 오늘 진행률 (0.0 ~ 1.0)
     val todayStudied  by viewModel.todayStudied.collectAsState()   // 오늘 학습한 카드 수
+    val totalCards    by viewModel.totalCards.collectAsState()     // 전체 누적 학습 카드 수
+    val streakDays    by viewModel.streakDays.collectAsState()     // 연속 학습 스트릭 (일)
 
     // 다이얼로그 / 드롭다운 메뉴 상태 관리
     // remember = recomposition 시에도 값 유지
@@ -260,7 +263,12 @@ fun HomeScreen(
     // ── Scaffold = Material Design 기본 레이아웃 구조 ──
     // topBar, bottomBar, content 영역으로 구성
     Scaffold(
-        topBar = { HomeTopBar() },  // 상단 앱바
+        topBar = {
+            Column {
+                HomeTopBar()
+                HorizontalDivider(color = HomeSurfaceContainer)  // border-b border-surface-container
+            }
+        },
         bottomBar = {
             HomeBottomNav(
                 onCreateClick = { showAddDeckDialog = true },  // 만들기 버튼
@@ -357,8 +365,11 @@ fun HomeScreen(
                 }
             )
 
-            // 빠른 통계 섹션 (연속 학습, 학습 중)
-            QuickStatsSection()
+            // 빠른 통계 섹션 (연속 학습, 총 암기 카드)
+            QuickStatsSection(
+                streakDays = streakDays,
+                totalCards = totalCards
+            )
 
             Spacer(Modifier.height(8.dp))
         }
@@ -430,7 +441,7 @@ private fun WelcomeSection() {
         )
         // 하단: 큰 인사말
         Text(
-            text = "안녕하세요!",
+            text = "안녕하세요, 지현님",
             fontSize = 28.sp,
             fontWeight = FontWeight.Bold,
             color = HomeOnSurface,
@@ -492,7 +503,7 @@ private fun DailyProgressHeroCard(
                     )
                     // 완료 텍스트
                     Text(
-                        text = "완료  (${studiedCount}장)",
+                        text = "완료됨",
                         fontSize = 16.sp,
                         color = HomeOnPrimary.copy(alpha = 0.9f),
                         modifier = Modifier.padding(bottom = 8.dp)  // 베이스라인 정렬
@@ -567,6 +578,14 @@ private fun DeckSection(
                 fontWeight = FontWeight.Bold,
                 color = HomeOnSurface
             )
+            TextButton(onClick = {}) {
+                Text(
+                    text = "모두 보기",
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = HomePrimary
+                )
+            }
         }
 
         // 덱 목록
@@ -629,7 +648,7 @@ private fun DeckCard(
                 // 아이콘 (덱 이름의 첫 글자)
                 Box(
                     modifier = Modifier
-                        .size(52.dp)
+                        .size(56.dp)
                         .clip(RoundedCornerShape(16.dp))
                         .background(iconBgColor),
                     contentAlignment = Alignment.Center
@@ -642,9 +661,9 @@ private fun DeckCard(
                     )
                 }
 
-                Spacer(Modifier.width(12.dp))
+                Spacer(Modifier.width(16.dp))
 
-                // 덱 이름 + 카드 남음
+                // 덱 이름 + 마지막 학습 시각
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = deck.name,
@@ -653,7 +672,7 @@ private fun DeckCard(
                         color = HomeOnSurface
                     )
                     Text(
-                        text = "${deck.newCount + deck.learnCount + deck.reviewCount}장 남음",
+                        text = "마지막 학습: ${relativeTime(deck.lastStudiedAt)}",
                         fontSize = 13.sp,
                         color = HomeOnSurfaceVariant
                     )
@@ -765,6 +784,22 @@ private fun DeckCard(
     }
 }
 
+// 마지막 학습 시각을 "X분 전" / "X시간 전" / "어제" / "X일 전" 형식으로 변환
+private fun relativeTime(lastStudiedAt: Long?): String {
+    if (lastStudiedAt == null) return "아직 없음"
+    val diffMs = System.currentTimeMillis() - lastStudiedAt
+    val diffMin  = diffMs / 60_000
+    val diffHour = diffMs / 3_600_000
+    val diffDay  = diffMs / 86_400_000
+    return when {
+        diffMin < 1   -> "방금 전"
+        diffMin < 60  -> "${diffMin}분 전"
+        diffHour < 24 -> "${diffHour}시간 전"
+        diffDay == 1L -> "어제"
+        else          -> "${diffDay}일 전"
+    }
+}
+
 // 통계 칩 (신규/학습 중/복습)
 @Composable
 private fun DeckStatChip(
@@ -851,34 +886,47 @@ private fun AddNewDeckCard(onClick: () -> Unit) {
 }
 
 // =====================================================
-// 빠른 통계 섹션 — 연속 학습, 학습 중
+// 빠른 통계 섹션 — 연속 학습 스트릭, 총 암기 카드
 // =====================================================
 @Composable
-private fun QuickStatsSection() {
+private fun QuickStatsSection(
+    streakDays: Int,
+    totalCards: Int
+) {
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        // 좌측: 연속 학습 카드
+        // 좌측: 연속 학습 스트릭
         Column(
             modifier = Modifier
                 .weight(1f)
                 .clip(RoundedCornerShape(24.dp))
-                .background(HomeSecondaryContainer.copy(alpha = 0.4f))
+                .background(HomeSecondaryContainer.copy(alpha = 0.3f))
                 .padding(20.dp),
             verticalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             Text("🔥", fontSize = 24.sp)
-            Text("오늘", fontSize = 28.sp, fontWeight = FontWeight.Bold, color = HomeOnSecondaryContainer)
-            Text("연속 학습 중", fontSize = 13.sp, fontWeight = FontWeight.Medium, color = HomeOnSecondaryContainer.copy(alpha = 0.75f))
+            Text(
+                text = "${streakDays}일",
+                fontSize = 28.sp,
+                fontWeight = FontWeight.Bold,
+                color = HomeOnSecondaryContainer
+            )
+            Text(
+                text = "연속 학습 스트릭",
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Medium,
+                color = HomeOnSecondaryContainer.copy(alpha = 0.7f)
+            )
         }
 
-        // 우측: 학습 중 카드
+        // 우측: 총 암기한 카드
         Column(
             modifier = Modifier
                 .weight(1f)
                 .clip(RoundedCornerShape(24.dp))
-                .background(HomeTertiaryContainer.copy(alpha = 0.25f))
+                .background(HomeTertiaryContainer.copy(alpha = 0.2f))
                 .padding(20.dp),
             verticalArrangement = Arrangement.spacedBy(6.dp)
         ) {
@@ -888,8 +936,18 @@ private fun QuickStatsSection() {
                 tint = HomeTertiary,
                 modifier = Modifier.size(28.dp)
             )
-            Text("학습 중", fontSize = 28.sp, fontWeight = FontWeight.Bold, color = HomeTertiary)
-            Text("꾸준히 해봐요!", fontSize = 13.sp, fontWeight = FontWeight.Medium, color = HomeTertiary.copy(alpha = 0.75f))
+            Text(
+                text = "%,d".format(totalCards),
+                fontSize = 28.sp,
+                fontWeight = FontWeight.Bold,
+                color = HomeTertiary
+            )
+            Text(
+                text = "총 암기한 카드",
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Medium,
+                color = HomeTertiary.copy(alpha = 0.7f)
+            )
         }
     }
 }
@@ -906,14 +964,14 @@ private fun HomeBottomNav(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .background(HomeSurfaceContainerLowest.copy(alpha = 0.95f))  // 약간 투명
+            .background(HomeSurfaceContainerLowest.copy(alpha = 0.95f))
             .padding(horizontal = 8.dp, vertical = 12.dp),
-        horizontalArrangement = Arrangement.SpaceAround  // 균등 분배
+        horizontalArrangement = Arrangement.SpaceAround
     ) {
-        BottomNavItem(label = "홈",   emoji = "🏠", isActive = true,  onClick = {})
-        BottomNavItem(label = "만들기", emoji = "➕", isActive = false, onClick = onCreateClick)
-        BottomNavItem(label = "통계",  emoji = "📊", isActive = false, onClick = onStatsClick)
-        BottomNavItem(label = "설정",  emoji = null, isActive = false, onClick = onSettingsClick, useIcon = true)
+        BottomNavItem(label = "홈",    icon = Icons.Filled.Home,     isActive = true,  onClick = {})
+        BottomNavItem(label = "만들기", icon = Icons.Filled.Add,      isActive = false, onClick = onCreateClick)
+        BottomNavItem(label = "통계",  icon = Icons.Filled.Star,     isActive = false, onClick = onStatsClick)
+        BottomNavItem(label = "설정",  icon = Icons.Filled.Settings, isActive = false, onClick = onSettingsClick)
     }
 }
 
@@ -921,37 +979,27 @@ private fun HomeBottomNav(
 @Composable
 private fun BottomNavItem(
     label: String,        // 레이블 (예: "홈")
-    emoji: String?,       // 이모지 (null이면 아이콘 사용)
+    icon: ImageVector,    // 아이콘
     isActive: Boolean,    // 활성 상태 (현재 화면)
-    onClick: () -> Unit,  // 클릭 이벤트
-    useIcon: Boolean = false  // 아이콘 사용 여부
+    onClick: () -> Unit   // 클릭 이벤트
 ) {
-    // 활성 상태에 따라 색상 변경
     val color = if (isActive) HomePrimary else HomeOnSurfaceVariant
 
     Column(
         modifier = Modifier
             .clip(RoundedCornerShape(16.dp))
-            // 활성 상태면 배경색 추가
-            .background(if (isActive) HomePrimary.copy(alpha = 0.12f) else Color.Transparent)
+            .background(if (isActive) HomeSecondaryContainer.copy(alpha = 0.4f) else Color.Transparent)
             .clickable { onClick() }
             .padding(horizontal = 20.dp, vertical = 8.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(4.dp)
     ) {
-        if (useIcon) {
-            // 아이콘 사용 (설정 버튼)
-            Icon(
-                Icons.Filled.Settings,
-                contentDescription = label,
-                tint = color,
-                modifier = Modifier.size(24.dp)
-            )
-        } else {
-            // 이모지 사용
-            Text(emoji ?: "", fontSize = 22.sp)
-        }
-        // 레이블
+        Icon(
+            imageVector = icon,
+            contentDescription = label,
+            tint = color,
+            modifier = Modifier.size(24.dp)
+        )
         Text(
             text = label,
             fontSize = 11.sp,

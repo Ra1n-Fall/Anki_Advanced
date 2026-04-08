@@ -8,7 +8,8 @@ data class DeckUi(
     val name: String,
     val newCount: Int,
     val learnCount: Int,
-    val reviewCount: Int
+    val reviewCount: Int,
+    val lastStudiedAt: Long? = null  // 마지막 학습 시각 (ms), 없으면 null
 )
 
 data class DeckStudyLimit(
