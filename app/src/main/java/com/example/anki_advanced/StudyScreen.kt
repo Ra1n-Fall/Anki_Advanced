@@ -56,12 +56,11 @@ fun StudyScreen(
 ) {
     val uiState       by viewModel.uiState.collectAsState()
     val currentCard   by viewModel.currentCard.collectAsState()
-    // [변경] binding.btnUndo.visibility 직접 제어 → undoStackSize StateFlow 구독
-    // 기존: undoStack.isEmpty() 확인 후 binding.btnUndo.visibility = VISIBLE/GONE 직접 설정
-    // 변경: undoStackSize를 StateFlow로 노출 → Screen이 구독해서 조건부 렌더링
+    //       undoStackSize를 StateFlow로 노출 → Screen이 구독해서 조건부 렌더링
     //       undoStackSize > 0 이면 QUESTION/ANSWER 분기 안 "↩ 되돌리기" 버튼 표시
     val undoStackSize by viewModel.undoStackSize.collectAsState()
     val isLoading     by viewModel.isLoading.collectAsState()
+    val progress      by viewModel.progress.collectAsState()  // 오늘 완료 수 / 전체 카드 수
 
     var isFlipped by remember { mutableStateOf(false) }
     // [변경] refreshCardText() 제거 → 카드 바뀔 때 isFlipped 자동 리셋
@@ -77,6 +76,8 @@ fun StudyScreen(
         undoStackSize = undoStackSize,  // 언두 버튼 표시 여부 결정용
         isLoading     = isLoading,
         isFlipped     = isFlipped,
+        doneToday     = progress.done,   // 오늘 완료한 리뷰 수
+        totalToday    = progress.total,  // 완료 + 남은 카드 수 (동적 갱신)
         onShowAnswer  = { isFlipped = true; viewModel.showAnswer() },
         onGrade       = { viewModel.applyGrade(it) },
         onUndo        = { viewModel.undoLast() },
@@ -86,23 +87,18 @@ fun StudyScreen(
 
 // ─────────────────────────────────────────────
 // 순수 UI — ViewModel 없음, Preview 가능
-// [변경] applyUiState() 제거 → when(uiState) 분기로 Compose가 자동 처리
-// 기존: applyUiState()에서 모든 View의 visibility를 직접 제어
-//       (tvFront, tvBack, btnShowAnswer, layoutGrade, btnUndo, layoutDone)
-// 변경: uiState 값에 따라 Compose의 when 분기가 자동으로 UI 구성
+// uiState 값에 따라 Compose의 when 분기가 자동으로 UI 구성
 //
-// ── onShowAnswer 클릭 연결 흐름 ──
+// ── onShowAnswer 클릭 연결 흐름 — "정답 보기" 버튼 ──
 // 정답 보기 버튼 클릭
 //   → onClick = onShowAnswer 람다 실행      (QUESTION 분기 안 Button)
 //     → onShowAnswer() 콜백 호출            (StudyScreenContent에서 받아 실행)
 //       → { isFlipped = true; viewModel.showAnswer() }  (StudyScreen에서 연결)
 //         → isFlipped = true  → animateFloatAsState 트리거 → 카드 플립 애니메이션 시작
 //         → viewModel.showAnswer() → _uiState.value = ANSWER → 채점 버튼 표시
-// [변경] binding.btnShowAnswer.setOnClickListener → onShowAnswer 람다 콜백
-// 기존: Activity에서 binding.btnShowAnswer.setOnClickListener { showAnswer() } 직접 등록
-// 변경: 람다로 주입 → StudyScreenContent → QUESTION 분기 안 Button까지 전달
+
 //
-// ── 언두 클릭 연결 흐름 ──
+// ── 언두 클릭 연결 흐름 — "↩ 되돌리기" 버튼 ──
 // ↩ 되돌리기 클릭
 //   → onClick = onUndo 람다 실행            (QUESTION/ANSWER 분기 안 TextButton)
 //     → onUndo() 콜백 호출                  (StudyScreenContent에서 받아 그대로 전달)
@@ -111,9 +107,7 @@ fun StudyScreen(
 //           → DB 로그 삭제 + 카드 상태 복구
 //           → _currentCard.value = undo.prevCard  (이전 카드 화면에 복원)
 //           → _uiState.value = QUESTION           (앞면 보기 상태로 복귀)
-// [변경] binding.btnUndo.setOnClickListener { undoLast() } → onUndo 람다 콜백
-// 기존: Activity에서 binding.btnUndo.setOnClickListener로 직접 등록
-// 변경: 람다로 주입 → StudyScreenContent → QUESTION/ANSWER 분기 안 TextButton까지 전달
+
 // ─────────────────────────────────────────────
 @Composable
 fun StudyScreenContent(
@@ -122,6 +116,8 @@ fun StudyScreenContent(
     undoStackSize: Int,
     isLoading: Boolean,
     isFlipped: Boolean,
+    doneToday: Int,   // 오늘 완료한 리뷰 수 → 프로그레스 바 분자
+    totalToday: Int,  // 완료 + 남은 카드 수 → 프로그레스 바 분모
     onShowAnswer: () -> Unit,
     onGrade: (Int) -> Unit,
     onUndo: () -> Unit,
@@ -154,7 +150,9 @@ fun StudyScreenContent(
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 StudyProgressBar(
-                    modifier = Modifier
+                    doneToday  = doneToday,   // ViewModel의 _progress.done 값
+                    totalToday = totalToday,  // ViewModel의 _progress.total 값
+                    modifier   = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 24.dp, vertical = 8.dp)
                 )
@@ -197,7 +195,7 @@ fun StudyScreenContent(
                                     .padding(horizontal = 24.dp)
                             ) {
                                 TextButton(
-                                    onClick = onUndo,
+                                    onClick = onUndo,//버튼 연결
                                     modifier = Modifier.align(Alignment.CenterEnd)
                                 ) {
                                     Text("↩ 되돌리기", color = StOnSurfaceVar, fontSize = 13.sp)
@@ -205,7 +203,7 @@ fun StudyScreenContent(
                             }
                         }
                         Button(
-                            onClick = onShowAnswer,
+                            onClick = onShowAnswer,//버튼연결
                             enabled = !isLoading,
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -267,16 +265,14 @@ fun StudyScreenContent(
 }
 
 
-// ── onBack 클릭 연결 흐름 ──
+// ── onBack 클릭 연결 흐름 — X 버튼(TopBar) / "홈으로" 버튼(DoneContent) ──
 // X 버튼(TopBar) 또는 홈으로 버튼(DoneContent) 클릭
 //   → onClick = onBack 람다 실행            (StudyTopBar의 IconButton / DoneContent의 Button)
 //     → onBack() 콜백 호출                  (StudyScreenContent에서 받아 그대로 전달)
 //       → { navController?.popBackStack() } (StudyScreen에서 NavController와 최초 연결)
 //         → 이전 화면(홈)으로 복귀
 //         → navController?. 의 ? : null-safe — null(Preview 등)이면 아무것도 안 함
-// [변경] finish() → navController.popBackStack()
-// 기존: Activity에서 binding.btnClose.setOnClickListener { finish() } 로 직접 종료
-// 변경: 람다로 주입 → StudyScreenContent → TopBar·DoneContent 두 곳에서 공유
+
 @Composable
 private fun StudyTopBar(onBack: () -> Unit) {
     Box(
@@ -313,9 +309,13 @@ private fun StudyTopBar(onBack: () -> Unit) {
 
 // ── 진행 바 ──
 @Composable
-private fun StudyProgressBar(modifier: Modifier = Modifier) {
+private fun StudyProgressBar(doneToday: Int, totalToday: Int, modifier: Modifier = Modifier) {
+    // totalToday = 0이면 0f 고정 (초기 로딩 전 division by zero 방지)
+    // totalToday > 0이면 done / total 비율 (0f ~ 1f)
+    val fraction = if (totalToday > 0) doneToday.toFloat() / totalToday.toFloat() else 0f
+    // fraction이 바뀌면 600ms 동안 이전 값에서 새 값으로 부드럽게 보간
     val progress by animateFloatAsState(
-        targetValue = 0.166f,
+        targetValue = fraction,
         animationSpec = tween(600),
         label = "progress"
     )
@@ -326,7 +326,7 @@ private fun StudyProgressBar(modifier: Modifier = Modifier) {
                 horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 Text("오늘의 학습", color = StOnSurfaceVar, fontSize = 11.sp)
-                Text("20 / 120", color = StPrimary, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                Text("$doneToday / $totalToday", color = StPrimary, fontSize = 12.sp, fontWeight = FontWeight.Bold)
             }
             Spacer(Modifier.height(4.dp))
             LinearProgressIndicator(
@@ -420,7 +420,7 @@ private fun BackFace(card: CardEntity?, modifier: Modifier = Modifier) {
 }
 
 // ── 채점 버튼 행 ──
-// ── GradeButton 클릭 연결 흐름 ──
+// ── GradeButton 클릭 연결 흐름 — 채점 버튼 (다시/어려움/좋음/쉬움) ──
 // GradeButton 클릭
 //   → { onGrade(0~3) } 람다 실행          (GradeButtonRow에서 주입)
 //     → onGrade(Int) 콜백 호출             (StudyScreenContent에서 받아 그대로 전달)
@@ -516,6 +516,7 @@ fun StudyScreenQuestionPreview() {
         undoStackSize = 0,
         isLoading = false,
         isFlipped = false,
+        doneToday = 20, totalToday = 120,
         onShowAnswer = {}, onGrade = {}, onUndo = {}, onBack = {}
     )
 }
@@ -530,6 +531,7 @@ fun StudyScreenAnswerPreview() {
         undoStackSize = 1,
         isLoading = false,
         isFlipped = true,
+        doneToday = 20, totalToday = 120,
         onShowAnswer = {}, onGrade = {}, onUndo = {}, onBack = {}
     )
 }
@@ -543,6 +545,7 @@ fun StudyScreenDonePreview() {
         undoStackSize = 0,
         isLoading = false,
         isFlipped = false,
+        doneToday = 120, totalToday = 120,
         onShowAnswer = {}, onGrade = {}, onUndo = {}, onBack = {}
     )
 }
