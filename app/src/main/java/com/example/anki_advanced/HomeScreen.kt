@@ -23,6 +23,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -148,6 +149,7 @@ private val HomeOnSecondaryContainer = Color(0xFF494C6A)  // 보조 컨테이너
 private val HomeTertiary             = Color(0xFF983772)  // 3차 강조색 (분홍)
 private val HomeTertiaryContainer    = Color(0xFFFFD8EE)  // 3차 컨테이너 (연한 분홍)
 private val HomeError                = Color(0xFFB41340)  // 에러/삭제 (빨강)
+private val HomeErrorDim             = Color(0xFFA70138)  // 에러 (어두운 빨강, 드롭다운 삭제 항목)
 
 // 덱 아이콘 배경색 순환
 // 각 덱마다 다른 색상 조합을 자동으로 할당 (index % 4)
@@ -671,52 +673,80 @@ private fun DeckCard(
                     // onDismissRequest = 메뉴 밖 클릭 시 호출
                     // 레거시 PopupMenu와 같은 역할이다.
                     // 차이는 XML 메뉴를 inflate하지 않고, 여기서 항목을 직접 선언한다는 점이다.
-                    // Stitch 화면 #6 "드롭다운 메뉴 컴포넌트 디자인" 기반
+                    // Stitch 화면 #6 "드롭다운 메뉴 컴포넌트 디자인" 기반:
+                    //   rounded-2xl(16dp), 흰 배경, shadow-[0_8px_30px_rgb(0,0,0,0.12)]
                     DropdownMenu(
                         expanded = isMenuExpanded,
                         onDismissRequest = onMenuDismiss,
-                        offset = DpOffset(x = (-8).dp, y = 0.dp)
+                        offset = DpOffset(x = (-8).dp, y = 0.dp),
+                        shape = RoundedCornerShape(16.dp),
+                        containerColor = HomeSurfaceContainerLowest,
+                        shadowElevation = 8.dp
                     ) {
                         // 레거시 `menu_deck_more.xml` 항목들을 지금은 Compose 코드 안에 직접 적었다.
                         DropdownMenuItem(
-                            text = { Text("카드 관리", color = HomeOnSurface) },
+                            text = {
+                                Text(
+                                    "카드 관리",
+                                    color = HomeOnSurface,
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.Medium
+                                )
+                            },
                             leadingIcon = {
                                 Icon(
                                     imageVector = Icons.Filled.Edit,
                                     contentDescription = null,
-                                    tint = HomeOnSurfaceVariant,
+                                    tint = HomeOutline,
                                     modifier = Modifier.size(20.dp)
                                 )
                             },
-                            onClick = onManageClick
+                            onClick = onManageClick,
+                            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 2.dp)
                         )
                         DropdownMenuItem(
-                            text = { Text("설정", color = HomeOnSurface) },
+                            text = {
+                                Text(
+                                    "설정",
+                                    color = HomeOnSurface,
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.Medium
+                                )
+                            },
                             leadingIcon = {
                                 Icon(
                                     imageVector = Icons.Filled.Settings,
                                     contentDescription = null,
-                                    tint = HomeOnSurfaceVariant,
+                                    tint = HomeOutline,
                                     modifier = Modifier.size(20.dp)
                                 )
                             },
-                            onClick = onSettingsClick
+                            onClick = onSettingsClick,
+                            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 2.dp)
                         )
                         HorizontalDivider(
-                            modifier = Modifier.padding(horizontal = 12.dp),
-                            color = HomeOutlineVariant.copy(alpha = 0.5f)
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                            color = HomeSurfaceContainer
                         )
                         DropdownMenuItem(
-                            text = { Text("삭제", color = HomeError) },
+                            text = {
+                                Text(
+                                    "삭제",
+                                    color = HomeErrorDim,
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.Medium
+                                )
+                            },
                             leadingIcon = {
                                 Icon(
                                     imageVector = Icons.Filled.Delete,
                                     contentDescription = null,
-                                    tint = HomeError,
+                                    tint = HomeErrorDim,
                                     modifier = Modifier.size(20.dp)
                                 )
                             },
-                            onClick = onDeleteClick
+                            onClick = onDeleteClick,
+                            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 2.dp)
                         )
                     }
                 }
