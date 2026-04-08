@@ -263,12 +263,7 @@ fun HomeScreen(
     // ── Scaffold = Material Design 기본 레이아웃 구조 ──
     // topBar, bottomBar, content 영역으로 구성
     Scaffold(
-        topBar = {
-            Column {
-                HomeTopBar()
-                HorizontalDivider(color = HomeSurfaceContainer)  // border-b border-surface-container
-            }
-        },
+        topBar = { HomeTopBar() },  // 상단 앱바
         bottomBar = {
             HomeBottomNav(
                 onCreateClick = { showAddDeckDialog = true },  // 만들기 버튼
@@ -441,7 +436,7 @@ private fun WelcomeSection() {
         )
         // 하단: 큰 인사말
         Text(
-            text = "안녕하세요, 지현님",
+            text = "안녕하세요!",
             fontSize = 28.sp,
             fontWeight = FontWeight.Bold,
             color = HomeOnSurface,
@@ -503,7 +498,7 @@ private fun DailyProgressHeroCard(
                     )
                     // 완료 텍스트
                     Text(
-                        text = "완료됨",
+                        text = "완료  (${studiedCount}장)",
                         fontSize = 16.sp,
                         color = HomeOnPrimary.copy(alpha = 0.9f),
                         modifier = Modifier.padding(bottom = 8.dp)  // 베이스라인 정렬
@@ -512,6 +507,7 @@ private fun DailyProgressHeroCard(
             }
 
             // 진행률 바
+            // gapSize = 0.dp, drawStopIndicator = {} → Material3 1.3 이전 외형 유지
             LinearProgressIndicator(
                 progress = { progress },  // 람다로 전달 (Compose 최신 API)
                 // 진행률 바가 실제로 채워지는 부분이다.
@@ -523,7 +519,9 @@ private fun DailyProgressHeroCard(
                     .clip(RoundedCornerShape(4.dp)),
                 color = HomeOnPrimary,  // 진행 색상
                 trackColor = HomeOnPrimary.copy(alpha = 0.2f),  // 배경 색상
-                strokeCap = StrokeCap.Round  // 둥근 끝
+                strokeCap = StrokeCap.Round,  // 둥근 끝
+                gapSize = 0.dp,          // gap 제거
+                drawStopIndicator = {}   // stop indicator 제거
             )
 
             // "학습 시작하기" 버튼
