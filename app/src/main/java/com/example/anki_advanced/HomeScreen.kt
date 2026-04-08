@@ -678,7 +678,10 @@ private fun DeckCard(
                     DropdownMenu(
                         expanded = isMenuExpanded,
                         onDismissRequest = onMenuDismiss,
-                        offset = DpOffset(x = (-8).dp, y = 0.dp)
+                        offset = DpOffset(x = (-8).dp, y = 0.dp),
+                        shape = RoundedCornerShape(16.dp),
+                        containerColor = HomeSurfaceContainerLowest,
+                        shadowElevation = 8.dp
                     ) {
                         // 레거시 `menu_deck_more.xml` 항목들을 지금은 Compose 코드 안에 직접 적었다.
                         DropdownMenuItem(
