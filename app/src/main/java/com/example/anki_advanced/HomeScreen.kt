@@ -38,6 +38,8 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Search
@@ -46,6 +48,7 @@ import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -75,6 +78,7 @@ import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
+import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
@@ -667,21 +671,51 @@ private fun DeckCard(
                     // onDismissRequest = 메뉴 밖 클릭 시 호출
                     // 레거시 PopupMenu와 같은 역할이다.
                     // 차이는 XML 메뉴를 inflate하지 않고, 여기서 항목을 직접 선언한다는 점이다.
+                    // Stitch 화면 #6 "드롭다운 메뉴 컴포넌트 디자인" 기반
                     DropdownMenu(
                         expanded = isMenuExpanded,
-                        onDismissRequest = onMenuDismiss
+                        onDismissRequest = onMenuDismiss,
+                        offset = DpOffset(x = (-8).dp, y = 0.dp)
                     ) {
                         // 레거시 `menu_deck_more.xml` 항목들을 지금은 Compose 코드 안에 직접 적었다.
                         DropdownMenuItem(
-                            text = { Text("카드 관리") },
+                            text = { Text("카드 관리", color = HomeOnSurface) },
+                            leadingIcon = {
+                                Icon(
+                                    imageVector = Icons.Filled.Edit,
+                                    contentDescription = null,
+                                    tint = HomeOnSurfaceVariant,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            },
                             onClick = onManageClick
                         )
                         DropdownMenuItem(
-                            text = { Text("설정") },
+                            text = { Text("설정", color = HomeOnSurface) },
+                            leadingIcon = {
+                                Icon(
+                                    imageVector = Icons.Filled.Settings,
+                                    contentDescription = null,
+                                    tint = HomeOnSurfaceVariant,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            },
                             onClick = onSettingsClick
+                        )
+                        HorizontalDivider(
+                            modifier = Modifier.padding(horizontal = 12.dp),
+                            color = HomeOutlineVariant.copy(alpha = 0.5f)
                         )
                         DropdownMenuItem(
                             text = { Text("삭제", color = HomeError) },
+                            leadingIcon = {
+                                Icon(
+                                    imageVector = Icons.Filled.Delete,
+                                    contentDescription = null,
+                                    tint = HomeError,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            },
                             onClick = onDeleteClick
                         )
                     }
