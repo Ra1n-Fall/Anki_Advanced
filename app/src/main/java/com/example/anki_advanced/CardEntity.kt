@@ -44,6 +44,10 @@ data class CardEntity(
     // SM2 알고리즘 계산 위한 변수
 
     // steps = [1분, 10분], step 0→1분 후, step 1→10분 후, step 끝→REVIEW 졸업
-    val learningStep: Int = 0
+    val learningStep: Int = 0,
+
+    // completion mode 전용
+    val baseInterval: Long = 0L,  // SM-2 ms 기반 원본 간격 (압축 전)
+    val lastReviewAt: Long = 0L   // 마지막 채점 시각 (progress 계산에 필요)
 
 )

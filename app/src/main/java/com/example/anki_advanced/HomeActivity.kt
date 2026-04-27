@@ -6,6 +6,7 @@ import androidx.activity.compose.setContent
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import com.example.anki_advanced.completion.CompletionStudyScreen
 
 
 //HomeActivity.kt
@@ -96,6 +97,20 @@ class HomeActivity : ComponentActivity() {
                         navController = navController,
                         deckId = deckId,
                         deckName = deckName
+                    )
+                }
+
+                // completion mode 학습 화면
+                // 진입 경로: navController.navigate("completionStudy/${deck.id}")
+                composable("completionStudy/{deckId}") { backStackEntry ->
+                    val deckId = backStackEntry.arguments
+                        ?.getString("deckId")
+                        ?.toLong()
+                        ?: return@composable
+
+                    CompletionStudyScreen(
+                        navController = navController,
+                        deckId = deckId
                     )
                 }
 
