@@ -4,38 +4,52 @@ import androidx.room.Database
 import androidx.room.RoomDatabase
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
+import com.example.anki_advanced.completion.CompletionCardDao
+import com.example.anki_advanced.completion.CompletionModeConfigEntity
+import com.example.anki_advanced.completion.CompletionModeDao
 
-// [변경] 마이그레이션 추가
-// 기존: version 1, 마이그레이션 없음
-// 변경: version 2, learningStep 컬럼 추가
-// 이유: 기존 DB 데이터를 유지하면서 새 컬럼 추가
+// version 1→2:
+// - cards 테이블에 baseInterval, lastReviewAt 추가 (completion mode 전용)
+// - completion_mode_configs 테이블 신규 생성
+// - 기존 learningStep은 version 1 최초 생성 시부터 포함되어 있으므로 여기서는 추가 불필요
 val MIGRATION_1_2 = object : Migration(1, 2) {
     override fun migrate(database: SupportSQLiteDatabase) {
-        database.execSQL(
-            "ALTER TABLE cards ADD COLUMN learningStep INTEGER NOT NULL DEFAULT 0"
-        )
+        database.execSQL("ALTER TABLE cards ADD COLUMN baseInterval INTEGER NOT NULL DEFAULT 0")
+        database.execSQL("ALTER TABLE cards ADD COLUMN lastReviewAt INTEGER NOT NULL DEFAULT 0")
+        database.execSQL("""
+            CREATE TABLE IF NOT EXISTS completion_mode_configs (
+                deckId INTEGER NOT NULL PRIMARY KEY,
+                targetPeriodMs INTEGER NOT NULL,
+                windowStartHour INTEGER NOT NULL DEFAULT 0,
+                windowEndHour INTEGER NOT NULL DEFAULT 24,
+                modeStartAt INTEGER NOT NULL,
+                sessionIntervalMs INTEGER NOT NULL DEFAULT 86400000,
+                isActive INTEGER NOT NULL DEFAULT 1
+            )
+        """.trimIndent())
     }
 }
 
 @Database(
-    entities = [CardEntity::class, DeckEntity::class, ReviewLogEntity::class],
-    // cards 테이블이 필요하다.
-    // cards 테이블 구조는 CardEntity에 정의되어 있다.
-    // 이 DB는 CardEntity 테이블을 포함한다고 Room에게 알려준다.
-
-    version = 1,
-
+    entities = [
+        CardEntity::class,
+        DeckEntity::class,
+        ReviewLogEntity::class,
+        CompletionModeConfigEntity::class
+    ],
+    version = 2,
     exportSchema = false
-    // 스키마 기록 파일이 필요 없다.
 )
 abstract class AppDatabase : RoomDatabase() {
-    // RoomDatabase를 상속하며, 실제 구현은 Room이 자동으로 해주기에 abstract class로 선언한다.
 
     abstract fun cardDao(): CardDao
-    // CardEntity를 위한 Dao를 반환하는 함수(반환 타입을 보고 Room이 알아서 인식)
-    // cardDao() 함수를 선언만 해 두고 구현은 Room에게 맡긴다.
 
     abstract fun deckDao(): DeckDao
 
     abstract fun reviewLogDao(): ReviewLogDao
+
+    // completion mode 전용 DAO
+    abstract fun completionModeDao(): CompletionModeDao
+
+    abstract fun completionCardDao(): CompletionCardDao
 }

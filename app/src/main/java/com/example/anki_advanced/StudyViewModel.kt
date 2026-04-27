@@ -18,6 +18,11 @@ import java.util.Calendar
 // QUESTION = 앞면만 보이는 상태, ANSWER = 뒷면 + 채점 버튼, DONE = 학습 완료
 enum class StudyUiState { QUESTION, ANSWER, DONE }
 
+// UI 점수(0~3) → SM-2 q값(0,3,4,5) 변환
+// Again=0, Hard=3, Good=4, Easy=5
+// 패키지 전체에서 공유 (completion 모드에서도 사용)
+fun sm2Q(score: Int) = when (score) { 0 -> 0; 1 -> 3; 2 -> 4; else -> 5 }
+
 private data class Sm2Result(
     val repetition: Int,
     val intervalDays: Int,
@@ -403,10 +408,8 @@ class StudyViewModel(application: Application) : AndroidViewModel(application) {
         return Sm2Result(rep, interval, ef, nextAt)
     }
 
-    // UI 점수(0~3) → SM-2 q값(0,3,4,5) 변환
-    // Again=0, Hard=3, Good=4, Easy=5
-    // 원래 SM-2는 0~5 연속값이지만 4단계 버튼에 맞춰 4개 값으로 매핑
-    private fun toSm2Q(score: Int) = when (score) { 0 -> 0; 1 -> 3; 2 -> 4; else -> 5 }
+    // UI 점수(0~3) → SM-2 q값(0,3,4,5) 변환 (top-level 함수 위임)
+    private fun toSm2Q(score: Int) = sm2Q(score)
 
     // 오늘 00:00:00:000(ms) 반환 — 복습 카드 조회 기준점으로 사용
     private fun startOfTodayMillis(nowMillis: Long): Long {
