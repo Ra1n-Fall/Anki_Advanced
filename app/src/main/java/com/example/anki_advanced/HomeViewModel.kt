@@ -4,6 +4,7 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.room.Room
+import com.example.anki_advanced.completion.CompletionModeConfigEntity
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -22,7 +23,7 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
         application,
         AppDatabase::class.java,
         "anki.db"
-    ).fallbackToDestructiveMigration().build()
+    ).addMigrations(MIGRATION_1_2).fallbackToDestructiveMigration().build()
 
     //  HomeScreen이 collectAsState()로 구독
     //       값이 바뀌면 Compose가 자동으로 화면을 다시 그림 (notify 불필요)
@@ -90,11 +91,26 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
                 val lastStudiedAt = withContext(Dispatchers.IO) {
                     db.reviewLogDao().getLastStudied(e.id) // 이 덱의 마지막 학습 시각
                 }
+                val completionConfig = withContext(Dispatchers.IO) {
+                    db.completionModeDao().getConfig(e.id)
+                }
 
                 totalStudied += studied                          // 전체 완료 수에 누적
                 totalDue += newCount + learnCount + reviewCount  // 전체 남은 수에 누적
 
-                DeckUi(e.id, e.name, newCount, learnCount, reviewCount, lastStudiedAt)
+                val activeConfig = completionConfig?.takeIf { it.isActive }
+                DeckUi(
+                    id = e.id,
+                    name = e.name,
+                    newCount = newCount,
+                    learnCount = learnCount,
+                    reviewCount = reviewCount,
+                    lastStudiedAt = lastStudiedAt,
+                    completionModeEndAt = activeConfig?.modeEndAt,
+                    completionTargetDays = activeConfig?.let {
+                        (it.targetPeriodMs / 86_400_000L).toInt().coerceAtLeast(1)
+                    }
+                )
                 // 이 줄이 이 덱의 변환 결과 → map이 모아서 List<DeckUi>로 만듦
             }
 
@@ -137,6 +153,31 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
     //       AlertDialog 생성, 확인 시 DB 삭제 + items.removeAt() + adapter.notifyItemRemoved()
     // 변경: DB 삭제 + loadDecks() 재호출만 담당
     //       삭제 확인 다이얼로그는 HomeScreen의 DeleteDeckDialog()가 담당
+    /** 완주 모드 활성화 — 설정 저장 후 덱 목록 갱신 */
+    fun activateCompletionMode(
+        deckId: Long,
+        targetPeriodMs: Long,
+        windowStartHour: Int = 0,
+        windowEndHour: Int = 24
+    ) {
+        viewModelScope.launch {
+            val now = System.currentTimeMillis()
+            withContext(Dispatchers.IO) {
+                db.completionModeDao().upsert(
+                    CompletionModeConfigEntity(
+                        deckId          = deckId,
+                        targetPeriodMs  = targetPeriodMs,
+                        windowStartHour = windowStartHour,
+                        windowEndHour   = windowEndHour,
+                        modeStartAt     = now,
+                        isActive        = true
+                    )
+                )
+            }
+            loadDecks()
+        }
+    }
+
     fun deleteDeck(deckId: Long) {
         viewModelScope.launch {
             withContext(Dispatchers.IO) {

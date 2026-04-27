@@ -18,6 +18,7 @@ package com.example.anki_advanced
 
 import android.content.Intent
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -43,10 +44,13 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Star
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
@@ -87,6 +91,8 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
+import com.example.anki_advanced.completion.CompletionModeConfigEntity
+import java.util.Calendar
 
 // =====================================================
 // 홈 화면 전체 흐름도
@@ -199,9 +205,10 @@ fun HomeScreen(
 
     // 다이얼로그 / 드롭다운 메뉴 상태 관리
     // remember = recomposition 시에도 값 유지
-    var showAddDeckDialog  by remember { mutableStateOf(false) }   // 덱 추가 다이얼로그 표시 여부
-    var deckToDelete       by remember { mutableStateOf<DeckUi?>(null) }  // 삭제할 덱 (null = 미표시)
-    var expandedMenuDeckId by remember { mutableStateOf<Long?>(null) }    // 열린 메뉴의 덱 ID (null = 모두 닫힘)
+    var showAddDeckDialog         by remember { mutableStateOf(false) }
+    var deckToDelete              by remember { mutableStateOf<DeckUi?>(null) }
+    var expandedMenuDeckId        by remember { mutableStateOf<Long?>(null) }
+    var deckForCompletionSetup    by remember { mutableStateOf<DeckUi?>(null) }  // 완주 모드 설정 대상
 
     // LocalContext = 현재 Composable이 실행되는 Context를 가져옴
     // Intent 생성 시 필요 (DeckSettingActivity로 이동)
@@ -260,6 +267,24 @@ fun HomeScreen(
         )
     }
 
+    // ── 완주 모드 설정 다이얼로그 ──
+    deckForCompletionSetup?.let { deck ->
+        CompletionModeSetupDialog(
+            deckName = deck.name,
+            currentEndAt = deck.completionModeEndAt,
+            onConfirm = { targetDays, windowStart, windowEnd ->
+                viewModel.activateCompletionMode(
+                    deckId = deck.id,
+                    targetPeriodMs = targetDays * 86_400_000L,
+                    windowStartHour = windowStart,
+                    windowEndHour = windowEnd
+                )
+                deckForCompletionSetup = null
+            },
+            onDismiss = { deckForCompletionSetup = null }
+        )
+    }
+
     // ── Scaffold = Material Design 기본 레이아웃 구조 ──
     // topBar, bottomBar, content 영역으로 구성
     Scaffold(
@@ -312,34 +337,22 @@ fun HomeScreen(
 
             // 덱 섹션
             DeckSection(
-                decks         = decks,
+                decks          = decks,
                 expandedMenuId = expandedMenuDeckId,
-                onDeckClick   = { deck ->
-                    // 레거시에서는 adapter 클릭으로 StudyActivity를 열었다.
-                    // 지금은 NavController route 이동으로 같은 흐름을 만든다.
-                    // 덱 클릭 → 학습 화면으로 이동
-                    navController?.navigate("study/${deck.id}/${deck.name}")
+                onDeckClick    = { deck ->
+                    if (deck.completionModeEndAt != null) {
+                        navController?.navigate("completionStudy/${deck.id}")
+                    } else {
+                        navController?.navigate("study/${deck.id}/${deck.name}")
+                    }
                 },
-                onMoreClick   = { deck ->
-                    // 레거시 `showDeckMoreMenu(anchor, deck)`는 눌린 View를 기준으로 팝업을 띄웠다.
-                    // 지금은 열린 덱 id만 상태로 들고 있고, 그 상태로 DropdownMenu를 그린다.
-                    // 더보기(점 3개) 클릭 → 해당 덱의 메뉴 열기
-                    expandedMenuDeckId = deck.id
-                },
-                onMenuDismiss = {
-                    // 메뉴 닫기
-                    expandedMenuDeckId = null
-                },
-                onManageClick = { deck ->
-                    // 레거시 action_manage와 대응되는 동작이다.
-                    // 카드 관리 메뉴 클릭 → 카드 관리 화면으로 이동
+                onMoreClick    = { deck -> expandedMenuDeckId = deck.id },
+                onMenuDismiss  = { expandedMenuDeckId = null },
+                onManageClick  = { deck ->
                     expandedMenuDeckId = null
                     navController?.navigate("deckManage/${deck.id}/${deck.name}")
                 },
                 onSettingsClick = { deck ->
-                    // 이 목적지는 아직 기존 Activity 화면을 그대로 사용한다.
-                    // 즉 홈은 Compose로 바뀌었지만 설정 화면은 레거시 UI와 공존 중이다.
-                    // 설정 메뉴 클릭 → 덱 설정 화면으로 이동 (XML Activity)
                     expandedMenuDeckId = null
                     val intent = Intent(context, DeckSettingActivity::class.java).apply {
                         putExtra("deck_id", deck.id)
@@ -348,16 +361,14 @@ fun HomeScreen(
                     context.startActivity(intent)
                 },
                 onDeleteClick = { deck ->
-                    // 레거시의 삭제 메뉴 클릭은 지금 "삭제 확인창을 열 상태로 변경"하는 방식으로 바뀌었다.
-                    // 삭제 메뉴 클릭 → 삭제 확인 다이얼로그 표시
                     expandedMenuDeckId = null
                     deckToDelete = deck
                 },
-                onAddDeckClick = {
-                    // 레거시 `btnAddDeck.setOnClickListener { showAddDeckDialog() }`와 대응된다.
-                    // 새 덱 추가 카드 클릭 → 덱 추가 다이얼로그 표시
-                    showAddDeckDialog = true
-                }
+                onCompletionSetupClick = { deck ->
+                    expandedMenuDeckId = null
+                    deckForCompletionSetup = deck
+                },
+                onAddDeckClick = { showAddDeckDialog = true }
             )
 
             // 빠른 통계 섹션 (연속 학습, 총 암기 카드)
@@ -548,15 +559,16 @@ private fun DailyProgressHeroCard(
 // =====================================================
 @Composable
 private fun DeckSection(
-    decks: List<DeckUi>,           // 덱 목록
-    expandedMenuId: Long?,          // 현재 열린 메뉴의 덱 ID
-    onDeckClick: (DeckUi) -> Unit,  // 덱 클릭
-    onMoreClick: (DeckUi) -> Unit,  // 더보기 버튼 클릭
-    onMenuDismiss: () -> Unit,      // 메뉴 닫기
-    onManageClick: (DeckUi) -> Unit,    // 카드 관리
-    onSettingsClick: (DeckUi) -> Unit,  // 설정
-    onDeleteClick: (DeckUi) -> Unit,    // 삭제
-    onAddDeckClick: () -> Unit      // 새 덱 추가
+    decks: List<DeckUi>,
+    expandedMenuId: Long?,
+    onDeckClick: (DeckUi) -> Unit,
+    onMoreClick: (DeckUi) -> Unit,
+    onMenuDismiss: () -> Unit,
+    onManageClick: (DeckUi) -> Unit,
+    onSettingsClick: (DeckUi) -> Unit,
+    onDeleteClick: (DeckUi) -> Unit,
+    onCompletionSetupClick: (DeckUi) -> Unit,  // 완주 모드 설정
+    onAddDeckClick: () -> Unit
 ) {
     // 레거시 RecyclerView + DeckAdapter가 하던 목록 표시 역할이 여기로 왔다.
     // adapter/view-holder 갱신 대신, 각 DeckUi를 바로 DeckCard로 매핑한다.
@@ -596,16 +608,17 @@ private fun DeckSection(
             // 아이콘 색상 선택 (순환)
             val (iconBg, iconTint) = deckIconColors[index % deckIconColors.size]
             DeckCard(
-                deck             = deck,
-                iconBgColor      = iconBg,
-                iconTintColor    = iconTint,
-                isMenuExpanded   = expandedMenuId == deck.id,  // 현재 덱의 메뉴가 열렸는지
-                onDeckClick      = { onDeckClick(deck) },
-                onMoreClick      = { onMoreClick(deck) },
-                onMenuDismiss    = onMenuDismiss,
-                onManageClick    = { onManageClick(deck) },
-                onSettingsClick  = { onSettingsClick(deck) },
-                onDeleteClick    = { onDeleteClick(deck) }
+                deck                   = deck,
+                iconBgColor            = iconBg,
+                iconTintColor          = iconTint,
+                isMenuExpanded         = expandedMenuId == deck.id,
+                onDeckClick            = { onDeckClick(deck) },
+                onMoreClick            = { onMoreClick(deck) },
+                onMenuDismiss          = onMenuDismiss,
+                onManageClick          = { onManageClick(deck) },
+                onSettingsClick        = { onSettingsClick(deck) },
+                onDeleteClick          = { onDeleteClick(deck) },
+                onCompletionSetupClick = { onCompletionSetupClick(deck) }
             )
         }
 
@@ -619,16 +632,17 @@ private fun DeckSection(
 // =====================================================
 @Composable
 private fun DeckCard(
-    deck: DeckUi,              // 덱 정보
-    iconBgColor: Color,        // 아이콘 배경색
-    iconTintColor: Color,      // 아이콘 글자색
-    isMenuExpanded: Boolean,   // 메뉴 열림 상태
-    onDeckClick: () -> Unit,   // 카드 전체 클릭
-    onMoreClick: () -> Unit,   // 더보기 버튼 클릭
-    onMenuDismiss: () -> Unit, // 메뉴 닫기
-    onManageClick: () -> Unit, // 카드 관리
-    onSettingsClick: () -> Unit,  // 설정
-    onDeleteClick: () -> Unit  // 삭제
+    deck: DeckUi,
+    iconBgColor: Color,
+    iconTintColor: Color,
+    isMenuExpanded: Boolean,
+    onDeckClick: () -> Unit,
+    onMoreClick: () -> Unit,
+    onMenuDismiss: () -> Unit,
+    onManageClick: () -> Unit,
+    onSettingsClick: () -> Unit,
+    onDeleteClick: () -> Unit,
+    onCompletionSetupClick: () -> Unit
 ) {
     // 레거시 RecyclerView 한 줄 아이템에 해당하는 Compose 버전이다.
     // 카드 전체 클릭은 학습 시작, 오른쪽 메뉴는 덱 관련 액션을 연다.
@@ -661,7 +675,7 @@ private fun DeckCard(
 
                 Spacer(Modifier.width(16.dp))
 
-                // 덱 이름 + 마지막 학습 시각
+                // 덱 이름 + completion 배지 + 마지막 학습 시각
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = deck.name,
@@ -669,10 +683,41 @@ private fun DeckCard(
                         fontWeight = FontWeight.Bold,
                         color = HomeOnSurface
                     )
+                    // completion mode 활성 시: "N일 플랜" 배지 + 만기일
+                    if (deck.completionModeEndAt != null && deck.completionTargetDays != null) {
+                        Spacer(Modifier.height(4.dp))
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            // 플랜 배지
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(50))
+                                    .background(iconTintColor.copy(alpha = 0.12f))
+                                    .padding(horizontal = 8.dp, vertical = 2.dp)
+                            ) {
+                                Text(
+                                    text = planLabel(deck.completionTargetDays),
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = iconTintColor
+                                )
+                            }
+                            // 만기일
+                            Text(
+                                text = "만기: ${formatDate(deck.completionModeEndAt)}",
+                                fontSize = 11.sp,
+                                color = HomeOnSurfaceVariant,
+                                fontWeight = FontWeight.Medium
+                            )
+                        }
+                    }
+                    Spacer(Modifier.height(2.dp))
                     Text(
                         text = "마지막 학습: ${relativeTime(deck.lastStudiedAt)}",
-                        fontSize = 13.sp,
-                        color = HomeOnSurfaceVariant
+                        fontSize = 12.sp,
+                        color = HomeOnSurfaceVariant.copy(alpha = 0.7f)
                     )
                 }
 
@@ -741,6 +786,26 @@ private fun DeckCard(
                             onClick = onSettingsClick,
                             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 2.dp)
                         )
+                        DropdownMenuItem(
+                            text = {
+                                Text(
+                                    if (deck.completionModeEndAt != null) "완주 모드 수정" else "완주 모드 설정",
+                                    color = HomePrimary,
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.Medium
+                                )
+                            },
+                            leadingIcon = {
+                                Icon(
+                                    imageVector = Icons.Filled.PlayArrow,
+                                    contentDescription = null,
+                                    tint = HomePrimary,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            },
+                            onClick = onCompletionSetupClick,
+                            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 2.dp)
+                        )
                         HorizontalDivider(
                             modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
                             color = HomeSurfaceContainer
@@ -780,6 +845,23 @@ private fun DeckCard(
             }
         }
     }
+}
+
+// 목표 기간(일) → "N일 플랜" / "N개월 플랜"
+private fun planLabel(days: Int): String = when {
+    days >= 28 -> "${days / 30}개월 플랜"
+    else       -> "${days}일 플랜"
+}
+
+// ms → "YYYY.MM.DD" 형식
+private fun formatDate(ms: Long): String {
+    val cal = Calendar.getInstance()
+    cal.timeInMillis = ms
+    return "%d.%02d.%02d".format(
+        cal.get(Calendar.YEAR),
+        cal.get(Calendar.MONTH) + 1,
+        cal.get(Calendar.DAY_OF_MONTH)
+    )
 }
 
 // 마지막 학습 시각을 "X분 전" / "X시간 전" / "어제" / "X일 전" 형식으로 변환
@@ -1069,6 +1151,90 @@ private fun DeleteDeckDialog(
                 Text("취소")
             }
         }
+    )
+}
+
+// =====================================================
+// 완주 모드 설정 다이얼로그
+// =====================================================
+@Composable
+private fun CompletionModeSetupDialog(
+    deckName: String,
+    currentEndAt: Long?,   // 기존 모드가 있으면 null이 아님
+    onConfirm: (targetDays: Int, windowStart: Int, windowEnd: Int) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val presets = listOf(7, 14, 30, 60, 90)
+    var selectedDays by remember { mutableStateOf(presets[0]) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Column {
+                Text(
+                    text = if (currentEndAt != null) "완주 모드 수정" else "완주 모드 설정",
+                    fontWeight = FontWeight.Bold
+                )
+                Text(
+                    text = deckName,
+                    fontSize = 13.sp,
+                    color = HomeOnSurfaceVariant
+                )
+            }
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    "목표 기간을 선택하세요",
+                    fontSize = 13.sp,
+                    color = HomeOnSurfaceVariant
+                )
+                // 기간 프리셋 선택 라디오
+                presets.forEach { days ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(
+                                if (selectedDays == days) HomePrimary.copy(alpha = 0.08f)
+                                else Color.Transparent
+                            )
+                            .selectable(
+                                selected = selectedDays == days,
+                                onClick = { selectedDays = days }
+                            )
+                            .padding(horizontal = 8.dp, vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        RadioButton(
+                            selected = selectedDays == days,
+                            onClick = { selectedDays = days }
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            text = planLabel(days),
+                            fontSize = 14.sp,
+                            fontWeight = if (selectedDays == days) FontWeight.SemiBold else FontWeight.Normal,
+                            color = if (selectedDays == days) HomePrimary else HomeOnSurface
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { onConfirm(selectedDays, 0, 24) }) {
+                Text(
+                    if (currentEndAt != null) "수정" else "시작",
+                    color = HomePrimary,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("취소") }
+        },
+        containerColor = HomeSurfaceContainerLowest,
+        shape = RoundedCornerShape(24.dp)
     )
 }
 
