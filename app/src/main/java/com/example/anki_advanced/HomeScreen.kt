@@ -45,6 +45,7 @@ import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Star
@@ -209,6 +210,7 @@ fun HomeScreen(
     var deckToDelete              by remember { mutableStateOf<DeckUi?>(null) }
     var expandedMenuDeckId        by remember { mutableStateOf<Long?>(null) }
     var deckForCompletionSetup    by remember { mutableStateOf<DeckUi?>(null) }  // 완주 모드 설정 대상
+    var deckToDeactivate          by remember { mutableStateOf<DeckUi?>(null) }  // 일반 모드 전환 확인 대상
 
     // LocalContext = 현재 Composable이 실행되는 Context를 가져옴
     // Intent 생성 시 필요 (DeckSettingActivity로 이동)
@@ -282,6 +284,28 @@ fun HomeScreen(
                 deckForCompletionSetup = null
             },
             onDismiss = { deckForCompletionSetup = null }
+        )
+    }
+
+    // ── 일반 모드 전환 확인 다이얼로그 ──
+    deckToDeactivate?.let { deck ->
+        AlertDialog(
+            onDismissRequest = { deckToDeactivate = null },
+            title = { Text("일반 모드로 전환", fontWeight = FontWeight.Bold) },
+            text  = { Text("완주 모드를 종료하고 일반 모드로 전환합니다.\n현재까지의 학습 일정은 유지됩니다.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    viewModel.deactivateCompletionMode(deck.id)
+                    deckToDeactivate = null
+                }) {
+                    Text("전환", color = HomePrimary, fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { deckToDeactivate = null }) {
+                    Text("취소")
+                }
+            }
         )
     }
 
@@ -367,6 +391,10 @@ fun HomeScreen(
                 onCompletionSetupClick = { deck ->
                     expandedMenuDeckId = null
                     deckForCompletionSetup = deck
+                },
+                onDeactivateModeClick = { deck ->
+                    expandedMenuDeckId = null
+                    deckToDeactivate = deck
                 },
                 onAddDeckClick = { showAddDeckDialog = true }
             )
@@ -568,6 +596,7 @@ private fun DeckSection(
     onSettingsClick: (DeckUi) -> Unit,
     onDeleteClick: (DeckUi) -> Unit,
     onCompletionSetupClick: (DeckUi) -> Unit,  // 완주 모드 설정
+    onDeactivateModeClick: (DeckUi) -> Unit,   // 일반 모드 전환
     onAddDeckClick: () -> Unit
 ) {
     // 레거시 RecyclerView + DeckAdapter가 하던 목록 표시 역할이 여기로 왔다.
@@ -618,7 +647,8 @@ private fun DeckSection(
                 onManageClick          = { onManageClick(deck) },
                 onSettingsClick        = { onSettingsClick(deck) },
                 onDeleteClick          = { onDeleteClick(deck) },
-                onCompletionSetupClick = { onCompletionSetupClick(deck) }
+                onCompletionSetupClick = { onCompletionSetupClick(deck) },
+                onDeactivateModeClick  = { onDeactivateModeClick(deck) }
             )
         }
 
@@ -642,7 +672,8 @@ private fun DeckCard(
     onManageClick: () -> Unit,
     onSettingsClick: () -> Unit,
     onDeleteClick: () -> Unit,
-    onCompletionSetupClick: () -> Unit
+    onCompletionSetupClick: () -> Unit,
+    onDeactivateModeClick: () -> Unit
 ) {
     // 레거시 RecyclerView 한 줄 아이템에 해당하는 Compose 버전이다.
     // 카드 전체 클릭은 학습 시작, 오른쪽 메뉴는 덱 관련 액션을 연다.
@@ -806,6 +837,28 @@ private fun DeckCard(
                             onClick = onCompletionSetupClick,
                             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 2.dp)
                         )
+                        if (deck.completionModeEndAt != null) {
+                            DropdownMenuItem(
+                                text = {
+                                    Text(
+                                        "일반 모드로 전환",
+                                        color = HomeOnSurfaceVariant,
+                                        fontSize = 14.sp,
+                                        fontWeight = FontWeight.Medium
+                                    )
+                                },
+                                leadingIcon = {
+                                    Icon(
+                                        imageVector = Icons.Filled.Refresh,
+                                        contentDescription = null,
+                                        tint = HomeOnSurfaceVariant,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                },
+                                onClick = onDeactivateModeClick,
+                                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 2.dp)
+                            )
+                        }
                         HorizontalDivider(
                             modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
                             color = HomeSurfaceContainer

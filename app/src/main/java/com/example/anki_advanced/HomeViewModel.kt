@@ -178,6 +178,15 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun deactivateCompletionMode(deckId: Long) {
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) {
+                db.completionModeDao().delete(deckId)
+            }
+            loadDecks()
+        }
+    }
+
     fun deleteDeck(deckId: Long) {
         viewModelScope.launch {
             withContext(Dispatchers.IO) {
