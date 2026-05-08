@@ -44,9 +44,10 @@ fun CompletionStudyScreen(
     val currentCard by viewModel.currentCard.collectAsState()
     val undoSize    by viewModel.undoStackSize.collectAsState()
     val isLoading   by viewModel.isLoading.collectAsState()
-    val session     by viewModel.sessionInfo.collectAsState()
-    val sessionDone by viewModel.sessionDone.collectAsState()
-    val config      by viewModel.modeConfig.collectAsState()
+    val session       by viewModel.sessionInfo.collectAsState()
+    val sessionDone   by viewModel.sessionDone.collectAsState()
+    val sessionTarget by viewModel.sessionTarget.collectAsState()
+    val config        by viewModel.modeConfig.collectAsState()
 
     var isFlipped by remember { mutableStateOf(false) }
     LaunchedEffect(currentCard) { isFlipped = false }
@@ -60,6 +61,7 @@ fun CompletionStudyScreen(
         isFlipped      = isFlipped,
         sessionInfo    = session,
         sessionDone    = sessionDone,
+        sessionTarget  = sessionTarget,
         modeEndAt      = config?.modeEndAt ?: 0L,
         onShowAnswer   = { isFlipped = true; viewModel.showAnswer() },
         onGrade        = { viewModel.applyGrade(it) },
@@ -79,15 +81,15 @@ fun CompletionStudyScreenContent(
     isFlipped: Boolean,
     sessionInfo: SessionInfo,
     sessionDone: Int,
+    sessionTarget: Int,
     modeEndAt: Long,
     onShowAnswer: () -> Unit,
     onGrade: (Int) -> Unit,
     onUndo: () -> Unit,
     onBack: () -> Unit
 ) {
-    // doneToday  → 이번 세션에서 완료한 카드 수 (ViewModel에서 직접 추적)
-    // totalToday → 세션당 목표 카드 수
-    val sessionTotal = sessionInfo.cardsPerSession.coerceAtLeast(1)
+    // doneToday  → 이번 세션에서 완료한 카드 수
+    // totalToday → 세션 시작 시 확정된 목표 (sessionTarget); 채점 중 변하지 않아 프로그레스 바가 단조 증가함
 
     // 완주 모드 배지 + 기간 잔여 정보를 Scaffold 위에 오버레이하는 대신,
     // Column으로 감싸서 배지 → StudyScreenContent 순으로 배치한다.
@@ -106,7 +108,7 @@ fun CompletionStudyScreenContent(
                 isLoading     = isLoading,
                 isFlipped     = isFlipped,
                 doneToday     = sessionDone,
-                totalToday    = sessionTotal,
+                totalToday    = sessionTarget,
                 onShowAnswer  = onShowAnswer,
                 onGrade       = onGrade,
                 onUndo        = onUndo,
@@ -167,6 +169,7 @@ fun CompletionStudyScreenQuestionPreview() {
         isFlipped     = false,
         sessionInfo   = SessionInfo(cardsPerSession = 20, requiredSessions = 7),
         sessionDone   = 5,
+        sessionTarget = 20,
         modeEndAt     = System.currentTimeMillis() + 7L * 24 * 60 * 60 * 1000,
         onShowAnswer  = {}, onGrade = {}, onUndo = {}, onBack = {}
     )
@@ -184,6 +187,7 @@ fun CompletionStudyScreenAnswerPreview() {
         isFlipped     = true,
         sessionInfo   = SessionInfo(cardsPerSession = 20, requiredSessions = 7),
         sessionDone   = 12,
+        sessionTarget = 20,
         modeEndAt     = System.currentTimeMillis() + 7L * 24 * 60 * 60 * 1000,
         onShowAnswer  = {}, onGrade = {}, onUndo = {}, onBack = {}
     )
