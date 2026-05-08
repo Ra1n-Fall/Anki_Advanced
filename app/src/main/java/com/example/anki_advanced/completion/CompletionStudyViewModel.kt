@@ -77,6 +77,10 @@ class CompletionStudyViewModel(application: Application) : AndroidViewModel(appl
     private val _sessionDone = MutableStateFlow(0)
     val sessionDone: StateFlow<Int> = _sessionDone.asStateFlow()
 
+    // 세션 시작 시 확정된 목표 카드 수 — 채점 중 cardsPerSession이 변해도 분모는 고정
+    private val _sessionTarget = MutableStateFlow(1)
+    val sessionTarget: StateFlow<Int> = _sessionTarget.asStateFlow()
+
     // [기존과 다름] 완주 모드 설정을 StateFlow로 노출 (기존에 없음)
     private val _modeConfig = MutableStateFlow<CompletionModeConfigEntity?>(null)
     val modeConfig: StateFlow<CompletionModeConfigEntity?> = _modeConfig.asStateFlow()
@@ -120,6 +124,8 @@ class CompletionStudyViewModel(application: Application) : AndroidViewModel(appl
                 sessionIntervalMs = deriveSessionInterval(compressionRatio)
             }
             _sessionDone.value = 0  // 세션 시작 시 초기화
+            refreshSessionInfo()    // 초기 cardsPerSession 확정
+            _sessionTarget.value = _sessionInfo.value.cardsPerSession.coerceAtLeast(1)
             loadNextCard()
         }
     }
