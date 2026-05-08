@@ -45,6 +45,7 @@ import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.LocalFireDepartment
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
@@ -1035,11 +1036,16 @@ private fun QuickStatsSection(
             modifier = Modifier
                 .weight(1f)
                 .clip(RoundedCornerShape(24.dp))
-                .background(HomeSecondaryContainer.copy(alpha = 0.3f))
+                .background(HomeSecondaryContainer.copy(alpha = 0.5f))
                 .padding(20.dp),
             verticalArrangement = Arrangement.spacedBy(6.dp)
         ) {
-            Text("🔥", fontSize = 24.sp)
+            Icon(
+                Icons.Filled.LocalFireDepartment,
+                contentDescription = null,
+                tint = HomeOnSecondaryContainer,
+                modifier = Modifier.size(28.dp)
+            )
             Text(
                 text = "${streakDays}일",
                 fontSize = 28.sp,
@@ -1059,7 +1065,7 @@ private fun QuickStatsSection(
             modifier = Modifier
                 .weight(1f)
                 .clip(RoundedCornerShape(24.dp))
-                .background(HomeTertiaryContainer.copy(alpha = 0.2f))
+                .background(HomeTertiaryContainer.copy(alpha = 0.5f))
                 .padding(20.dp),
             verticalArrangement = Arrangement.spacedBy(6.dp)
         ) {
