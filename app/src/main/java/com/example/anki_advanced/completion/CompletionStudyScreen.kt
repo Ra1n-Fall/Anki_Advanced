@@ -88,8 +88,8 @@ fun CompletionStudyScreenContent(
     onUndo: () -> Unit,
     onBack: () -> Unit
 ) {
-    // doneToday  → 이번 세션에서 완료한 카드 수
-    // totalToday → 세션 시작 시 확정된 목표 (sessionTarget); 채점 중 변하지 않아 프로그레스 바가 단조 증가함
+    // LEARNING 카드가 세션 중 반복 등장하면 sessionDone이 sessionTarget을 초과할 수 있으므로 상한 보정
+    val displayDone = sessionDone.coerceAtMost(sessionTarget)
 
     // 완주 모드 배지 + 기간 잔여 정보를 Scaffold 위에 오버레이하는 대신,
     // Column으로 감싸서 배지 → StudyScreenContent 순으로 배치한다.
@@ -107,7 +107,7 @@ fun CompletionStudyScreenContent(
                 undoStackSize = undoStackSize,
                 isLoading     = isLoading,
                 isFlipped     = isFlipped,
-                doneToday     = sessionDone,
+                doneToday     = displayDone,
                 totalToday    = sessionTarget,
                 onShowAnswer  = onShowAnswer,
                 onGrade       = onGrade,

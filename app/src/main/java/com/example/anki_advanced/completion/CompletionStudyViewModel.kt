@@ -125,7 +125,14 @@ class CompletionStudyViewModel(application: Application) : AndroidViewModel(appl
             }
             _sessionDone.value = 0  // 세션 시작 시 초기화
             refreshSessionInfo()    // 초기 cardsPerSession 확정
-            _sessionTarget.value = _sessionInfo.value.cardsPerSession.coerceAtLeast(1)
+            _sessionTarget.value = withContext(Dispatchers.IO) {
+                val now = System.currentTimeMillis()
+                val dueLearning  = db.completionCardDao().countDueLearning(deckId, now)
+                val dueReview    = db.completionCardDao().countDueReview(deckId, now)
+                val newThisSession = _sessionInfo.value.cardsPerSession
+                // 세션에서 실제로 볼 카드 수 = 이미 due인 카드 + 이번에 새로 볼 NEW 카드
+                (dueLearning + dueReview + newThisSession).coerceAtLeast(1)
+            }
             loadNextCard()
         }
     }
