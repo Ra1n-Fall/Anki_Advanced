@@ -78,6 +78,14 @@ interface CompletionCardDao {
     @Query("SELECT COUNT(*) FROM cards WHERE deckId = :deckId AND status != 0")
     suspend fun countStudied(deckId: Long): Int
 
+    /** 세션 시작 시점에 이미 due 상태인 LEARNING 카드 수 */
+    @Query("SELECT COUNT(*) FROM cards WHERE deckId = :deckId AND status = 1 AND nextReviewAt <= :now")
+    suspend fun countDueLearning(deckId: Long, now: Long): Int
+
+    /** 세션 시작 시점에 이미 due 상태인 REVIEW 카드 수 */
+    @Query("SELECT COUNT(*) FROM cards WHERE deckId = :deckId AND status = 2 AND nextReviewAt <= :now")
+    suspend fun countDueReview(deckId: Long, now: Long): Int
+
     // ── compressionRatio 계산용 ──────────────────────────────────────────────
 
     /** 덱 내 REVIEW 카드의 최대 baseInterval (ms). 없으면 null */
