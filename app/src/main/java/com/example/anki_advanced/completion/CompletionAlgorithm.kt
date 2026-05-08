@@ -61,13 +61,22 @@ fun calculateCompressionRatio(
     currentMaxBaseInterval: Long,
     window: AllowedWindow
 ): Double {
+    // REVIEW 카드가 없으면 비교 기준이 없으므로 압축 없음
     if (currentMaxBaseInterval <= 0L) return 1.0
 
+    // 절대 시간이 아닌 윈도우 유효 시간 기준으로 비교한다.
+    // 예) 목표 7일, 윈도우 09~22시(13h/일) → targetWindowTime = 7 × 13h = 91h
     val targetWindowTime = calculateWindowTime(0L, targetPeriodMs, window)
+    // 덱에서 가장 긴 baseInterval 카드의 윈도우 유효 시간 = "자연 속도로 학습하면 걸리는 시간"
     val maxWindowTime    = calculateWindowTime(0L, currentMaxBaseInterval, window)
 
+    // 윈도우 내 유효 시간이 0이면 (윈도우 설정 오류 등) 압축 없음
     if (maxWindowTime <= 0L) return 1.0
 
+    // ratio = 목표 윈도우 시간 / 자연 학습 윈도우 시간
+    // ratio < 1.0 → 목표 기간이 자연 학습보다 짧음 → 간격 압축(더 자주 복습)
+    // ratio > 1.0 → 목표 기간이 더 길음 → 간격 확장(덜 자주 복습)
+    // RATIO_MIN(0.01)~RATIO_MAX(10.0) 범위로 클램핑해 극단값 방지
     return (targetWindowTime.toDouble() / maxWindowTime).coerceIn(RATIO_MIN, RATIO_MAX)
 }
 
