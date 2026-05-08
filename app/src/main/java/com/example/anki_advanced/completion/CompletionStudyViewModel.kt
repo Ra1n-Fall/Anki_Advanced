@@ -67,11 +67,15 @@ class CompletionStudyViewModel(application: Application) : AndroidViewModel(appl
     private val _isLoading = MutableStateFlow(false)
     val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
 
-    // [기존과 다름] progress 대신 sessionInfo 노출
+    // [기존과 다름] progress 대신 sessionInfo + sessionDone 노출
     // 기존: StudyProgress(done, total) — 오늘 학습 진행 바용
     // 완주: SessionInfo(cardsPerSession, requiredSessions) — 마감일 기준 세션 목표용
     private val _sessionInfo = MutableStateFlow(SessionInfo(0, 0))
     val sessionInfo: StateFlow<SessionInfo> = _sessionInfo.asStateFlow()
+
+    // 현재 세션에서 완료한 카드 수 — 세션이 시작될 때마다 0으로 초기화
+    private val _sessionDone = MutableStateFlow(0)
+    val sessionDone: StateFlow<Int> = _sessionDone.asStateFlow()
 
     // [기존과 다름] 완주 모드 설정을 StateFlow로 노출 (기존에 없음)
     private val _modeConfig = MutableStateFlow<CompletionModeConfigEntity?>(null)
@@ -83,8 +87,9 @@ class CompletionStudyViewModel(application: Application) : AndroidViewModel(appl
     private val undoStack = ArrayDeque<UndoEntry>()
     private var deckId = -1L
 
-    // [기존과 다름] 아래 세 필드 없음
+    // [기존과 다름] 아래 네 필드 없음
     private var compressionRatio = 1.0   // targetPeriod / maxBaseInterval; SM-2 간격을 이 비율로 압축
+    private var sessionIntervalMs = 86_400_000L  // compressionRatio에서 자동 산출; 1일 * ratio (최소 30분)
     private var window = AllowedWindow() // 학습 허용 시간대; 윈도우 밖 시간은 간격 계산에서 제외
     private var lastSessionTime = 0L     // 마지막 세션 완료 시각; 누락 세션 수 계산에 사용
 
@@ -112,7 +117,9 @@ class CompletionStudyViewModel(application: Application) : AndroidViewModel(appl
                     val maxBase = db.completionCardDao().getMaxBaseInterval(deckId) ?: 0L
                     calculateCompressionRatio(config.targetPeriodMs, maxBase, window)
                 }
+                sessionIntervalMs = deriveSessionInterval(compressionRatio)
             }
+            _sessionDone.value = 0  // 세션 시작 시 초기화
             loadNextCard()
         }
     }
@@ -173,6 +180,7 @@ class CompletionStudyViewModel(application: Application) : AndroidViewModel(appl
 
                 // [기존과 다름] 기존: loadNextCard()만 호출
                 // 완주: refreshSessionInfo() → loadNextCard() 순서로 세션 정보도 갱신
+                _sessionDone.value += 1  // 세션 내 완료 카드 수 증가
                 refreshSessionInfo()
                 loadNextCard()
             } finally {
@@ -198,6 +206,7 @@ class CompletionStudyViewModel(application: Application) : AndroidViewModel(appl
                     }
                     db.cardDao().update(undo.prevCard)
                 }
+                _sessionDone.value = (_sessionDone.value - 1).coerceAtLeast(0)  // undo 시 세션 완료 수 감소
                 refreshSessionInfo()
                 _currentCard.value = undo.prevCard
                 _uiState.value = StudyUiState.QUESTION
@@ -220,18 +229,25 @@ class CompletionStudyViewModel(application: Application) : AndroidViewModel(appl
         deckId: Long,
         targetPeriodMs: Long,
         windowStartHour: Int,
-        windowEndHour: Int,
-        sessionIntervalMs: Long = 86_400_000L
+        windowEndHour: Int
+        // sessionIntervalMs는 compressionRatio에서 자동 산출하므로 파라미터 제거
     ) {
         viewModelScope.launch {
             val now = System.currentTimeMillis()
+            val newWindow = AllowedWindow(windowStartHour, windowEndHour)
+            val maxBase = withContext(Dispatchers.IO) {
+                db.completionCardDao().getMaxBaseInterval(deckId) ?: 0L
+            }
+            val newRatio = calculateCompressionRatio(targetPeriodMs, maxBase, newWindow)
+            val newSessionIntervalMs = deriveSessionInterval(newRatio)
+
             val newConfig = CompletionModeConfigEntity(
                 deckId            = deckId,
                 targetPeriodMs    = targetPeriodMs,
                 windowStartHour   = windowStartHour,
                 windowEndHour     = windowEndHour,
                 modeStartAt       = now,
-                sessionIntervalMs = sessionIntervalMs,
+                sessionIntervalMs = newSessionIntervalMs,  // ratio 기반 자동 계산값 저장
                 isActive          = true
             )
             withContext(Dispatchers.IO) {
@@ -241,6 +257,7 @@ class CompletionStudyViewModel(application: Application) : AndroidViewModel(appl
             }
             _modeConfig.value = newConfig
             window = newConfig.toAllowedWindow()
+            sessionIntervalMs = newSessionIntervalMs
         }
     }
 
@@ -330,7 +347,7 @@ class CompletionStudyViewModel(application: Application) : AndroidViewModel(appl
                 remainingCards    = remainingCards.coerceAtLeast(0),
                 now               = now,
                 modeEndMs         = config.modeEndAt,
-                sessionIntervalMs = config.sessionIntervalMs,
+                sessionIntervalMs = sessionIntervalMs,  // config 값 대신 ratio 기반 인메모리 값 사용
                 lastSessionTime   = lastSessionTime,
                 window            = window
             )
@@ -424,5 +441,12 @@ class CompletionStudyViewModel(application: Application) : AndroidViewModel(appl
             db.completionCardDao().updateNextReviewAt(card.id, newNextReviewAt)
         }
         compressionRatio = newRatio
+        sessionIntervalMs = deriveSessionInterval(newRatio)
     }
+
+    // compressionRatio → sessionIntervalMs 자동 산출
+    // 1일 * ratio: ratio=1.0 → 1일 1세션, ratio=0.5 → 12시간 2세션, ratio=0.1 → ~2.4시간 ~10세션
+    // 최소 30분 하한: 너무 잦은 세션 알림 방지
+    private fun deriveSessionInterval(ratio: Double): Long =
+        (86_400_000L * ratio).toLong().coerceIn(30 * 60 * 1000L, 86_400_000L)
 }

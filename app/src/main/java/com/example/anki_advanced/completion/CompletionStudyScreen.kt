@@ -45,6 +45,7 @@ fun CompletionStudyScreen(
     val undoSize    by viewModel.undoStackSize.collectAsState()
     val isLoading   by viewModel.isLoading.collectAsState()
     val session     by viewModel.sessionInfo.collectAsState()
+    val sessionDone by viewModel.sessionDone.collectAsState()
     val config      by viewModel.modeConfig.collectAsState()
 
     var isFlipped by remember { mutableStateOf(false) }
@@ -58,6 +59,7 @@ fun CompletionStudyScreen(
         isLoading      = isLoading,
         isFlipped      = isFlipped,
         sessionInfo    = session,
+        sessionDone    = sessionDone,
         modeEndAt      = config?.modeEndAt ?: 0L,
         onShowAnswer   = { isFlipped = true; viewModel.showAnswer() },
         onGrade        = { viewModel.applyGrade(it) },
@@ -76,17 +78,15 @@ fun CompletionStudyScreenContent(
     isLoading: Boolean,
     isFlipped: Boolean,
     sessionInfo: SessionInfo,
+    sessionDone: Int,
     modeEndAt: Long,
     onShowAnswer: () -> Unit,
     onGrade: (Int) -> Unit,
     onUndo: () -> Unit,
     onBack: () -> Unit
 ) {
-    // StudyScreenContent는 doneToday/totalToday를 진행 바에 표시한다.
-    // completion mode에서는 "오늘 목표 진행도" 대신 세션 기반 값을 전달한다.
-    // - doneToday  → 이번 세션 완료 카드 수 (totalCards - remainingCards 추정)
-    // - totalToday → 세션당 목표 카드 수 (cardsPerSession)
-    val sessionDone  = (sessionInfo.cardsPerSession - sessionInfo.cardsPerSession).coerceAtLeast(0)
+    // doneToday  → 이번 세션에서 완료한 카드 수 (ViewModel에서 직접 추적)
+    // totalToday → 세션당 목표 카드 수
     val sessionTotal = sessionInfo.cardsPerSession.coerceAtLeast(1)
 
     // 완주 모드 배지 + 기간 잔여 정보를 Scaffold 위에 오버레이하는 대신,
@@ -166,6 +166,7 @@ fun CompletionStudyScreenQuestionPreview() {
         isLoading     = false,
         isFlipped     = false,
         sessionInfo   = SessionInfo(cardsPerSession = 20, requiredSessions = 7),
+        sessionDone   = 5,
         modeEndAt     = System.currentTimeMillis() + 7L * 24 * 60 * 60 * 1000,
         onShowAnswer  = {}, onGrade = {}, onUndo = {}, onBack = {}
     )
@@ -182,6 +183,7 @@ fun CompletionStudyScreenAnswerPreview() {
         isLoading     = false,
         isFlipped     = true,
         sessionInfo   = SessionInfo(cardsPerSession = 20, requiredSessions = 7),
+        sessionDone   = 12,
         modeEndAt     = System.currentTimeMillis() + 7L * 24 * 60 * 60 * 1000,
         onShowAnswer  = {}, onGrade = {}, onUndo = {}, onBack = {}
     )
