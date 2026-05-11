@@ -198,7 +198,7 @@ fun StudyScreenContent(
                                     onClick = onUndo,//버튼 연결
                                     modifier = Modifier.align(Alignment.CenterEnd)
                                 ) {
-                                    Text("↩ 되돌리기", color = StOnSurfaceVar, fontSize = 13.sp)
+                                    Text("↩ 되돌리기", color = StOnSurfaceVar, fontSize = 25.sp)
                                 }
                             }
                         }
@@ -231,7 +231,7 @@ fun StudyScreenContent(
                                     onClick = onUndo,
                                     modifier = Modifier.align(Alignment.CenterEnd)
                                 ) {
-                                    Text("↩ 되돌리기", color = StOnSurfaceVar, fontSize = 13.sp)
+                                    Text("↩ 되돌리기", color = StOnSurfaceVar, fontSize = 25.sp)
                                 }
                             }
                         }
