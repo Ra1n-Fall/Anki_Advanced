@@ -272,18 +272,10 @@ fun HomeScreen(
 
     // ── 완주 모드 설정 다이얼로그 ──
     deckForCompletionSetup?.let { deck ->
-        CompletionModeSetupDialog(
+        com.example.anki_advanced.completion.CompletionModeSetupDialog(
+            deckId = deck.id,
             deckName = deck.name,
-            currentEndAt = deck.completionModeEndAt,
-            onConfirm = { targetDays, windowStart, windowEnd ->
-                viewModel.activateCompletionMode(
-                    deckId = deck.id,
-                    targetPeriodMs = targetDays * 86_400_000L,
-                    windowStartHour = windowStart,
-                    windowEndHour = windowEnd
-                )
-                deckForCompletionSetup = null
-            },
+            onConfirm = { deckForCompletionSetup = null },
             onDismiss = { deckForCompletionSetup = null }
         )
     }

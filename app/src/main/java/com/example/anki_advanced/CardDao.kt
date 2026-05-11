@@ -118,4 +118,7 @@ interface CardDao {
     """)
     suspend fun countReviewCards(deckId: Long, todayStart: Long): Int
     // review 카드 수: 오늘 자정 이전이 nextReviewAt인 카드만
+
+    @Query("SELECT COUNT(*) FROM cards WHERE deckId = :deckId")
+    suspend fun countAllCards(deckId: Long): Int
 }
