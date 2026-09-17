@@ -3,7 +3,6 @@ package com.example.anki_advanced
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import androidx.room.Room
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -58,13 +57,8 @@ data class StudyProgress(val done: Int, val total: Int)
 //       ViewModel은 화면 회전에도 살아남아 상태 유지됨
 class StudyViewModel(application: Application) : AndroidViewModel(application) {
 
-    // DB 인스턴스 생성
-
-    private val db = Room.databaseBuilder(
-        application,
-        AppDatabase::class.java,
-        "anki.db"
-    ).fallbackToDestructiveMigration().build()
+    // DB 인스턴스는 AppDatabase 싱글턴을 공유한다 (화면마다 따로 만들지 않음)
+    private val db = AppDatabase.getInstance(application)
 
     // undoStack 구조 동일
     // ArrayDeque를 스택으로 사용: addLast()로 push, removeLast()로 pop

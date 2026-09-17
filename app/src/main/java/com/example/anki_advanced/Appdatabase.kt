@@ -1,6 +1,8 @@
 package com.example.anki_advanced
 
+import android.content.Context
 import androidx.room.Database
+import androidx.room.Room
 import androidx.room.RoomDatabase
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
@@ -52,4 +54,24 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun completionModeDao(): CompletionModeDao
 
     abstract fun completionCardDao(): CompletionCardDao
+
+    companion object {
+        @Volatile
+        private var INSTANCE: AppDatabase? = null
+
+        // 앱 전체에서 AppDatabase 인스턴스를 하나만 생성해 공유한다.
+        // 화면(ViewModel/Activity)마다 따로 Room.databaseBuilder를 호출하지 않도록 한다.
+        fun getInstance(context: Context): AppDatabase {
+            return INSTANCE ?: synchronized(this) {
+                INSTANCE ?: Room.databaseBuilder(
+                    context.applicationContext,
+                    AppDatabase::class.java,
+                    "anki.db"
+                ).addMigrations(MIGRATION_1_2)
+                    .fallbackToDestructiveMigration()
+                    .build()
+                    .also { INSTANCE = it }
+            }
+        }
+    }
 }

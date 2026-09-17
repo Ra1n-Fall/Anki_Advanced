@@ -3,7 +3,6 @@ package com.example.anki_advanced
 import android.os.Bundle
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
-import androidx.room.Room
 import com.example.anki_advanced.databinding.ActivitySettingBinding
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -28,8 +27,7 @@ class DeckSettingActivity : AppCompatActivity() {
             return
         }
 
-        db = Room.databaseBuilder(applicationContext, AppDatabase::class.java, "anki.db")
-            .build()
+        db = AppDatabase.getInstance(applicationContext)
 
         // 현재 저장된 한도값 불러와서 표시
         lifecycleScope.launch {

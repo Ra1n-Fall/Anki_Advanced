@@ -3,7 +3,6 @@ package com.example.anki_advanced
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import androidx.room.Room
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -49,13 +48,8 @@ data class DeckManageUiState(
 
 class DeckManageViewModel(application: Application) : AndroidViewModel(application) {
 
-    // [유지] DB 인스턴스 생성 방식 동일
-    // application Context로 생성하므로 Activity 생명주기에 독립적
-    private val db = Room.databaseBuilder(
-        application,
-        AppDatabase::class.java,
-        "anki.db"
-    ).fallbackToDestructiveMigration().build()
+    // DB 인스턴스는 AppDatabase 싱글턴을 공유한다 (화면마다 따로 만들지 않음)
+    private val db = AppDatabase.getInstance(application)
 
     // [변경] items: MutableList + adapter + 개별 변수 → _uiState: MutableStateFlow<DeckManageUiState>
     // 기존: items.clear() + for loop + adapter.notifyDataSetChanged() 로 화면 갱신

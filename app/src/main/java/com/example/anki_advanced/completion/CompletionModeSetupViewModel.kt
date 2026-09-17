@@ -3,9 +3,7 @@ package com.example.anki_advanced.completion
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import androidx.room.Room
 import com.example.anki_advanced.AppDatabase
-import com.example.anki_advanced.MIGRATION_1_2
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -15,11 +13,8 @@ import kotlinx.coroutines.withContext
 
 class CompletionModeSetupViewModel(application: Application) : AndroidViewModel(application) {
 
-    private val db = Room.databaseBuilder(
-        application,
-        AppDatabase::class.java,
-        "anki.db"
-    ).addMigrations(MIGRATION_1_2).fallbackToDestructiveMigration().build()
+    // DB 인스턴스는 AppDatabase 싱글턴을 공유한다 (화면마다 따로 만들지 않음)
+    private val db = AppDatabase.getInstance(application)
 
     private val _totalCards = MutableStateFlow(0)
     val totalCards: StateFlow<Int> = _totalCards.asStateFlow()

@@ -3,7 +3,6 @@ package com.example.anki_advanced.completion
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import androidx.room.Room
 import com.example.anki_advanced.AppDatabase
 import com.example.anki_advanced.CARD_LEARNING
 import com.example.anki_advanced.CARD_NEW
@@ -31,14 +30,8 @@ private data class UndoEntry(
 
 class CompletionStudyViewModel(application: Application) : AndroidViewModel(application) {
 
-    // [StudyViewModel 동일] addMigrations만 추가
-    private val db = Room.databaseBuilder(
-        application,
-        AppDatabase::class.java,
-        "anki.db"
-    ).addMigrations(
-        com.example.anki_advanced.MIGRATION_1_2
-    ).fallbackToDestructiveMigration().build()
+    // DB 인스턴스는 AppDatabase 싱글턴을 공유한다 (화면마다 따로 만들지 않음)
+    private val db = AppDatabase.getInstance(application)
 
     // ── State ─────────────────────────────────────────────────────────────────
 

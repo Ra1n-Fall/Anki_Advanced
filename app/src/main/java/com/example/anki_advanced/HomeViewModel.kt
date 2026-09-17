@@ -3,7 +3,6 @@ package com.example.anki_advanced
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import androidx.room.Room
 import com.example.anki_advanced.completion.CompletionModeConfigEntity
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -17,13 +16,8 @@ import java.util.Calendar
 class HomeViewModel(application: Application) : AndroidViewModel(application) {
     // application = 앱 전체 Context, DB 생성에 필요
 
-    // DB 인스턴스 생성
-    // [유지] 기존 HomeActivity의 db 생성 코드와 동일, ViewModel로 이동만 함
-    private val db = Room.databaseBuilder(
-        application,
-        AppDatabase::class.java,
-        "anki.db"
-    ).addMigrations(MIGRATION_1_2).fallbackToDestructiveMigration().build()
+    // DB 인스턴스는 AppDatabase 싱글턴을 공유한다 (화면마다 따로 만들지 않음)
+    private val db = AppDatabase.getInstance(application)
 
     //  HomeScreen이 collectAsState()로 구독
     //       값이 바뀌면 Compose가 자동으로 화면을 다시 그림 (notify 불필요)
