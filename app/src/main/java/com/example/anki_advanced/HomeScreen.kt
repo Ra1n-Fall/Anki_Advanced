@@ -30,6 +30,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Home
@@ -305,7 +306,8 @@ fun HomeScreen(
                     expandedMenuDeckId = null
                     deckToDeactivate = deck
                 },
-                onAddDeckClick = { showAddDeckDialog = true }
+                onAddDeckClick = { showAddDeckDialog = true },
+                onGenerateWithAiClick = { navController?.navigate("generateDeck") }
             )
 
             QuickStatsSection(
@@ -475,7 +477,8 @@ private fun DeckSection(
     onDeleteClick: (DeckUi) -> Unit,
     onCompletionSetupClick: (DeckUi) -> Unit,  // 완주 모드 설정
     onDeactivateModeClick: (DeckUi) -> Unit,   // 일반 모드 전환
-    onAddDeckClick: () -> Unit
+    onAddDeckClick: () -> Unit,
+    onGenerateWithAiClick: () -> Unit
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Row(
@@ -523,6 +526,9 @@ private fun DeckSection(
 
         // 목록 맨 아래 "새 덱 만들기" 카드 (점선 느낌의 테두리)
         AddNewDeckCard(onClick = onAddDeckClick)
+
+        // "AI로 자동 생성" 카드: Gemini API로 주제만 입력하면 카드를 자동으로 만들어주는 화면 진입점.
+        AiGenerateDeckCard(onClick = onGenerateWithAiClick)
     }
 }
 
@@ -866,6 +872,50 @@ private fun AddNewDeckCard(onClick: () -> Unit) {
                 color = HomeOutline,
                 textAlign = TextAlign.Center
             )
+        }
+    }
+}
+
+// ── "AI로 자동 생성" 카드: Gemini API 덱 생성 화면으로 이동하는 진입점 ────────
+@Composable
+private fun AiGenerateDeckCard(onClick: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(24.dp))
+            .background(Brush.linearGradient(colors = listOf(HomePrimary, HomeTertiary)))
+            .clickable { onClick() }
+            .padding(vertical = 24.dp, horizontal = 20.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                modifier = Modifier
+                    .size(48.dp)
+                    .clip(CircleShape)
+                    .background(HomeOnPrimary.copy(alpha = 0.2f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    Icons.Filled.AutoAwesome,
+                    contentDescription = "AI로 생성",
+                    tint = HomeOnPrimary,
+                    modifier = Modifier.size(24.dp)
+                )
+            }
+            Spacer(Modifier.width(16.dp))
+            Column {
+                Text(
+                    "AI로 덱 자동 생성",
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = HomeOnPrimary
+                )
+                Text(
+                    "주제만 입력하면 Gemini가 카드를 만들어줘요",
+                    fontSize = 13.sp,
+                    color = HomeOnPrimary.copy(alpha = 0.85f)
+                )
+            }
         }
     }
 }

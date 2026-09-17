@@ -7,6 +7,7 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.example.anki_advanced.completion.CompletionStudyScreen
+import com.example.anki_advanced.gemini.DeckGenerationScreen
 
 // 이 앱의 유일한 진입점(런처) Activity.
 // 화면 자체를 그리지는 않고, "어떤 화면(Screen)을 어떤 경로(route)로 오갈 수 있는지"만 정의한다.
@@ -107,6 +108,12 @@ class HomeActivity : ComponentActivity() {
                         deckId = deckId,
                         deckName = deckName
                     )
+                }
+
+                // Gemini API로 주제만 입력하면 카드를 자동 생성해주는 화면.
+                // 진입 경로: navController.navigate("generateDeck")
+                composable("generateDeck") {
+                    DeckGenerationScreen(navController = navController)
                 }
             }
         }

@@ -78,6 +78,10 @@ dependencies {
     implementation("androidx.room:room-ktx:2.6.1")//Kotlin 전용 확장 api
     add("kapt", "androidx.room:room-compiler:2.6.1")//추상코드 활성화하는 컴파일러
 
+    // Gemini API 호출(OkHttp) + API 키 암호화 저장(EncryptedSharedPreferences)
+    implementation(libs.okhttp)
+    implementation(libs.androidx.security.crypto)
+
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
