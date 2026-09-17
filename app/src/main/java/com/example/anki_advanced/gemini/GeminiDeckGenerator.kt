@@ -61,25 +61,25 @@ class GeminiDeckGenerator {
 
     suspend fun generateCards(
         apiKey: String,
-        topic: String,
+        content: String,
         image: ImageInput?,
         count: Int,
         language: String
     ): GenerationResult = withContext(Dispatchers.IO) {
-        val cardType = classifyCardType(apiKey, topic, image)
-        val cards = generateTypedCards(apiKey, cardType, topic, image, count, language)
+        val cardType = classifyCardType(apiKey, content, image)
+        val cards = generateTypedCards(apiKey, cardType, content, image, count, language)
         GenerationResult(cardType, cards)
     }
 
     // ── 1단계: 콘텐츠 유형 분류 ──────────────────────────────────────────────
-    private fun classifyCardType(apiKey: String, topic: String, image: ImageInput?): CardType {
+    private fun classifyCardType(apiKey: String, content: String, image: ImageInput?): CardType {
         val instruction = buildString {
             appendLine("다음 학습 자료를 분석해서, 플래시카드로 만들기 가장 적합한 콘텐츠 유형 하나를 판단해줘.")
             appendLine("- fact: 일반적인 개념/사실 설명")
             appendLine("- code: 프로그래밍 코드나 문법")
             appendLine("- formula: 수학/과학 공식이나 관계식")
             appendLine("- timeline: 역사적 사건이나 시간 순서")
-            if (topic.isNotBlank()) appendLine("주제 또는 텍스트: \"$topic\"")
+            if (content.isNotBlank()) appendLine("내용: \"$content\"")
             if (image != null) appendLine("첨부된 이미지의 내용도 함께 고려해.")
         }
 
@@ -103,12 +103,12 @@ class GeminiDeckGenerator {
     private fun generateTypedCards(
         apiKey: String,
         cardType: CardType,
-        topic: String,
+        content: String,
         image: ImageInput?,
         count: Int,
         language: String
     ): List<GeneratedCard> {
-        val prompt = buildTypedPrompt(cardType, topic, image != null, count, language)
+        val prompt = buildTypedPrompt(cardType, content, image != null, count, language)
 
         val schema = JSONObject().apply {
             put("type", "ARRAY")
@@ -135,22 +135,22 @@ class GeminiDeckGenerator {
         }
 
         if (result.isEmpty()) {
-            throw GeminiApiException("생성된 카드가 없습니다. 주제나 이미지를 다시 확인해보세요.")
+            throw GeminiApiException("생성된 카드가 없습니다. 내용이나 이미지를 다시 확인해보세요.")
         }
         return result
     }
 
     private fun buildTypedPrompt(
         cardType: CardType,
-        topic: String,
+        content: String,
         hasImage: Boolean,
         count: Int,
         language: String
     ): String {
         val source = when {
-            hasImage && topic.isNotBlank() -> "아래 이미지와 보충 설명(\"$topic\")을 참고해서"
+            hasImage && content.isNotBlank() -> "아래 이미지와 보충 설명(\"$content\")을 참고해서"
             hasImage -> "첨부된 이미지의 내용을 참고해서"
-            else -> "다음 주제(\"$topic\")에 대해"
+            else -> "다음 내용(\"$content\")을 바탕으로"
         }
 
         val (guide, example) = when (cardType) {

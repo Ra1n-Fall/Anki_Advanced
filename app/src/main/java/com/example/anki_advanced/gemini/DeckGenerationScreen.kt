@@ -147,7 +147,8 @@ fun DeckGenerationScreen(
             } else {
                 GenerationForm(
                     uiState = uiState,
-                    onTopicChange = viewModel::onTopicChange,
+                    onDeckNameChange = viewModel::onDeckNameChange,
+                    onContentChange = viewModel::onContentChange,
                     onCardCountChange = viewModel::onCardCountChange,
                     onLanguageChange = viewModel::onLanguageChange,
                     onGenerateClick = viewModel::onGenerateClick,
@@ -234,11 +235,12 @@ private fun ApiKeySetupCard(
     }
 }
 
-// ── API 키 등록 후: 주제/이미지/장수/언어 입력 폼 ───────────────────────────
+// ── API 키 등록 후: 제목/내용/이미지/장수/언어 입력 폼 ──────────────────────
 @Composable
 private fun GenerationForm(
     uiState: DeckGenerationUiState,
-    onTopicChange: (String) -> Unit,
+    onDeckNameChange: (String) -> Unit,
+    onContentChange: (String) -> Unit,
     onCardCountChange: (Int) -> Unit,
     onLanguageChange: (String) -> Unit,
     onGenerateClick: () -> Unit,
@@ -267,9 +269,17 @@ private fun GenerationForm(
         }
 
         OutlinedTextField(
-            value = uiState.topic,
-            onValueChange = onTopicChange,
-            label = { Text("주제 또는 텍스트 (예: 토익 필수 단어 500)") },
+            value = uiState.deckName,
+            onValueChange = onDeckNameChange,
+            label = { Text("덱 제목 (선택 — 비워두면 내용으로 자동 생성)") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth()
+        )
+
+        OutlinedTextField(
+            value = uiState.content,
+            onValueChange = onContentChange,
+            label = { Text("내용 (필수 — 카드로 만들 주제나 텍스트)") },
             modifier = Modifier.fillMaxWidth()
         )
 

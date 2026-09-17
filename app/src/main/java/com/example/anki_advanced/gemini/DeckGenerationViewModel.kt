@@ -26,10 +26,13 @@ data class GeneratedCardUi(
 )
 
 // AI 덱 생성 화면 전체 상태.
+// 제목(deckName)과 내용(content)은 서로 다른 역할이다: content는 카드를 뽑아낼 실제 자료라서
+// 생성에 반드시 필요하고, deckName은 그냥 이름표라서 비워두면 생성 후 content로부터 자동으로 채워준다.
 data class DeckGenerationUiState(
     val hasApiKey: Boolean = false,
     val apiKeyInput: String = "",
-    val topic: String = "",
+    val deckName: String = "",             // 덱 제목 (선택 입력 — 비워두면 자동 생성)
+    val content: String = "",              // 카드로 만들 내용/텍스트 (필수)
     val cardCount: Int = 10,
     val language: String = "한국어",
     val imagePreview: Bitmap? = null,      // 첨부된 이미지 미리보기 (없으면 null)
@@ -37,12 +40,12 @@ data class DeckGenerationUiState(
     val errorMessage: String? = null,
     val detectedCardType: CardType? = null, // 생성 직후 Gemini가 분류한 콘텐츠 유형
     val generatedCards: List<GeneratedCardUi> = emptyList(),
-    val deckName: String = "",
     val isSaving: Boolean = false,
     val saveCompleted: Boolean = false
 ) {
     val selectedCount: Int get() = generatedCards.count { it.selected }
-    val canGenerate: Boolean get() = !isLoading && (topic.isNotBlank() || imagePreview != null)
+    // 제목만 있고 내용/이미지가 없으면 생성할 수 없다 — 카드를 뽑아낼 자료가 있어야 하기 때문.
+    val canGenerate: Boolean get() = !isLoading && (content.isNotBlank() || imagePreview != null)
 }
 
 class DeckGenerationViewModel(application: Application) : AndroidViewModel(application) {
@@ -76,8 +79,8 @@ class DeckGenerationViewModel(application: Application) : AndroidViewModel(appli
         _uiState.update { it.copy(hasApiKey = false) }
     }
 
-    fun onTopicChange(value: String) {
-        _uiState.update { it.copy(topic = value) }
+    fun onContentChange(value: String) {
+        _uiState.update { it.copy(content = value) }
     }
 
     fun onCardCountChange(value: Int) {
@@ -122,8 +125,8 @@ class DeckGenerationViewModel(application: Application) : AndroidViewModel(appli
             _uiState.update { it.copy(errorMessage = "먼저 Gemini API 키를 등록해주세요.") }
             return
         }
-        if (state.topic.isBlank() && state.imagePreview == null) {
-            _uiState.update { it.copy(errorMessage = "주제를 입력하거나 이미지를 첨부해주세요.") }
+        if (state.content.isBlank() && state.imagePreview == null) {
+            _uiState.update { it.copy(errorMessage = "카드로 만들 내용을 입력하거나 이미지를 첨부해주세요.") }
             return
         }
 
@@ -137,7 +140,7 @@ class DeckGenerationViewModel(application: Application) : AndroidViewModel(appli
             try {
                 val result = generator.generateCards(
                     apiKey = apiKey,
-                    topic = state.topic.trim(),
+                    content = state.content.trim(),
                     image = image,
                     count = state.cardCount,
                     language = state.language
@@ -147,7 +150,8 @@ class DeckGenerationViewModel(application: Application) : AndroidViewModel(appli
                         isLoading = false,
                         detectedCardType = result.cardType,
                         generatedCards = result.cards.map { GeneratedCardUi(it.front, it.back, it.cardType) },
-                        deckName = current.deckName.ifBlank { state.topic.trim().ifBlank { result.cardType.label } }
+                        // 제목을 안 적었으면 내용의 첫 줄로 자동 채워준다 (그래도 비어있으면 유형 이름으로 대체).
+                        deckName = current.deckName.ifBlank { deriveDeckTitle(state.content, result.cardType.label) }
                     )
                 }
             } catch (e: GeminiApiException) {
@@ -209,5 +213,12 @@ class DeckGenerationViewModel(application: Application) : AndroidViewModel(appli
 
     fun consumeError() {
         _uiState.update { it.copy(errorMessage = null) }
+    }
+
+    // 제목을 안 입력했을 때 쓸 이름을 내용에서 뽑아낸다: 첫 줄을 30자로 잘라서 사용.
+    private fun deriveDeckTitle(content: String, fallback: String): String {
+        val firstLine = content.trim().lineSequence().firstOrNull { it.isNotBlank() }?.trim().orEmpty()
+        if (firstLine.isBlank()) return fallback
+        return if (firstLine.length > 30) firstLine.take(30).trimEnd() + "…" else firstLine
     }
 }
