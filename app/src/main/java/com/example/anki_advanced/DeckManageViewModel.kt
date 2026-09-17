@@ -11,65 +11,50 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-// [변경] DeckManageActivity → DeckManageViewModel
-// 기존: AppCompatActivity 상속, lifecycleScope + items: MutableList<CardUi> + adapter.notify~ 로 UI 직접 제어
-//       다이얼로그도 Activity 안에서 AlertDialog.Builder로 직접 생성
-// 변경: AndroidViewModel 상속, 단일 UiState StateFlow로 모든 상태 노출 → DeckManageScreen이 구독
-// 이유: UI 로직(Compose)과 비즈니스 로직 분리, 입력/다이얼로그 상태까지 ViewModel에서 통합 관리
-
-// [변경] 개별 멤버 변수 → DeckManageUiState 단일 상태 객체
-// 기존: DeckManageActivity의
-//       - var deckId: Long
-//       - val items = mutableListOf<CardUi>()
-//       - lateinit var adapter: CardAdapter
-//       등 개별 멤버 변수로 관리
-// 변경: data class 하나로 묶어 관리
-//       - copy()로 원하는 필드만 변경
-//       - Screen은 하나의 StateFlow만 구독하면 됨
-//       - allCards: 전체 카드 목록 (DB 기준)
-//       - visibleCards: 검색 필터가 적용된 화면에 표시될 카드 목록
+// 덱 관리 화면(카드 목록 보기/추가/수정/삭제/검색)의 모든 상태를 한 곳에 모아둔 데이터 덩어리.
+// 화면(DeckManageScreen)은 이 객체 하나만 구독하면, 입력창 값부터 다이얼로그 열림 여부까지 전부 알 수 있다.
+//
+// [문법] data class로 "화면 상태 전체"를 표현하는 패턴 (UiState 패턴)
+//   상태 하나하나를 개별 변수로 흩어놓지 않고 한 덩어리로 묶어두면,
+//   나중에 copy(필드 = 새값)로 "일부만 바뀐 새 상태"를 쉽게 만들 수 있다.
 data class DeckManageUiState(
     val deckId: Long = -1L,
     val deckName: String = "영어 단어",
-    val allCards: List<CardUi> = emptyList(),    // 필터 전 전체 목록 (검색 초기화 시 복원용)
-    val visibleCards: List<CardUi> = emptyList(), // 화면에 표시되는 목록 (검색 필터 적용)
-    val frontText: String = "",
-    val backText: String = "",
-    val tagsText: String = "",
+    val allCards: List<CardUi> = emptyList(),     // 검색 필터를 적용하기 전, DB에서 읽어온 전체 카드 목록
+    val visibleCards: List<CardUi> = emptyList(), // 실제로 화면에 표시되는 목록 (검색어로 걸러진 결과)
+    val frontText: String = "",   // 카드 추가 입력창 - 앞면
+    val backText: String = "",    // 카드 추가 입력창 - 뒷면
+    val tagsText: String = "",    // 카드 추가 입력창 - 태그
     val searchQuery: String = "",
     val showDeleteDialog: Boolean = false,
     val cardToDelete: CardUi? = null,
     val showEditDialog: Boolean = false,
     val cardToEdit: CardUi? = null,
-    val editFront: String = "",
-    val editBack: String = "",
-    val editTags: String = ""
+    val editFront: String = "",   // 카드 수정 입력창 - 앞면
+    val editBack: String = "",    // 카드 수정 입력창 - 뒷면
+    val editTags: String = ""     // 카드 수정 입력창 - 태그
 )
 
 class DeckManageViewModel(application: Application) : AndroidViewModel(application) {
 
-    // DB 인스턴스는 AppDatabase 싱글턴을 공유한다 (화면마다 따로 만들지 않음)
+    // 앱 전체가 공유하는 AppDatabase 싱글턴 인스턴스.
     private val db = AppDatabase.getInstance(application)
 
-    // [변경] items: MutableList + adapter + 개별 변수 → _uiState: MutableStateFlow<DeckManageUiState>
-    // 기존: items.clear() + for loop + adapter.notifyDataSetChanged() 로 화면 갱신
-    // 변경: _uiState.update { } 로 상태 갱신 → DeckManageScreen이 collectAsState()로 구독해 자동 재구성
-    // _uiState: ViewModel 내부에서만 쓰기 가능
-    // uiState: Screen에는 읽기 전용으로 노출
+    // _uiState: 이 ViewModel 안에서만 값을 바꿀 수 있는 "쓰기용" 통.
+    // uiState : DeckManageScreen에는 읽기 전용으로만 노출하는 "읽기용" 통로.
+    // 화면은 uiState.collectAsState()로 구독해두면 값이 바뀔 때마다 자동으로 다시 그려진다.
     private val _uiState = MutableStateFlow(DeckManageUiState())
     val uiState: StateFlow<DeckManageUiState> = _uiState.asStateFlow()
 
-    // [변경] Activity onCreate 직접 호출 → initialize()로 분리
-    // 기존: Activity onCreate에서 intent.getLongExtra("deck_id")로 deckId 받아
-    //       바로 initialLoadFromDb() 호출
-    // 변경: Screen의 LaunchedEffect(deckId, deckName)에서 initialize() 호출
-    //       이미 같은 덱이 로딩된 경우 중복 DB 조회를 방지하는 early return 포함
+    // 화면에 처음 들어올 때 호출: deckId/deckName을 상태에 채우고 카드 목록을 불러온다.
     fun initialize(deckId: Long, deckName: String) {
         val current = _uiState.value
-        // 같은 덱이고 이미 카드가 로딩된 경우 → 재조회 불필요 (화면 회전 등으로 재진입 시 방지)
+        // 이미 같은 덱을 로딩해둔 상태라면(예: 화면 회전으로 재진입) DB를 또 조회할 필요가 없다.
         if (current.deckId == deckId && current.deckName == deckName && current.allCards.isNotEmpty()) return
 
-        // deckId / deckName 먼저 업데이트 후 loadCards() 호출
+        // [문법] _uiState.update { it.copy(...) }
+        //   현재 상태(it)를 받아서, 바뀐 부분만 copy()로 교체한 "새 상태 객체"를 만들어 반영하는 표준 패턴.
+        //   StateFlow의 값은 직접 필드를 바꾸는 게 아니라 항상 "새 객체로 통째로 교체"하는 방식으로 갱신한다.
         _uiState.update {
             it.copy(
                 deckId = deckId,
@@ -79,33 +64,27 @@ class DeckManageViewModel(application: Application) : AndroidViewModel(applicati
         loadCards()
     }
 
-    // [변경] initialLoadFromDb() → loadCards()
-    // 기존: items.clear() 후 for loop으로 CardUi 변환 + adapter.notifyDataSetChanged()
-    // 변경: map으로 한 번에 변환 후 _uiState.update로 allCards / visibleCards 동시 갱신
-    //       visibleCards = 현재 검색어(searchQuery)로 필터링된 결과로 함께 갱신
+    // 현재 deckId의 카드 전체를 DB에서 다시 읽어와 목록을 갱신.
     fun loadCards() {
         val deckId = _uiState.value.deckId
-        if (deckId < 0L) return  // initialize() 전에 호출되면 무시
+        if (deckId < 0L) return  // initialize()가 아직 안 불렸으면 그냥 무시
         viewModelScope.launch {
-            // IO 스레드에서 DB 조회
             val all = withContext(Dispatchers.IO) { db.cardDao().getByDeck(deckId) }
-            // CardEntity → CardUi 변환 (UI 표시용 모델)
+            // DB용 모델(CardEntity)을 화면용 모델(CardUi)로 변환
             val cards = all.map { CardUi(it.id, it.front, it.back, it.tags, it.state, it.status) }
             _uiState.update { state ->
                 state.copy(
                     allCards = cards,
+                    // 재로딩 후에도 사용자가 입력해둔 검색어(state.searchQuery)를 그대로 유지하면서 다시 필터링
                     visibleCards = filterCards(cards, state.searchQuery)
-                    // 재로딩 시에도 현재 검색어 유지
                 )
             }
         }
     }
 
-    // [변경] binding.etFront/etBack/etTags 직접 읽기 → StateFlow 이벤트 함수로 분리
-    // 기존: btnAdd.setOnClickListener 안에서 binding.etFront.text.toString().trim() 직접 읽음
-    // 변경: 텍스트 변경 시마다 이 함수들로 UiState에 반영
-    //       onAddCard() 호출 시점에 UiState.frontText / backText / tagsText 에서 값을 읽음
-    //       → ViewModel이 View 참조를 갖지 않아도 됨
+    // 아래 세 함수는 "카드 추가" 입력창에 글자를 입력할 때마다 화면에서 호출해주는 콜백들.
+    // 값을 ViewModel 상태에 저장해두면, ViewModel이 View(EditText 등)를 직접 들고 있지 않아도
+    // onAddCard()를 호출하는 시점에 state.frontText 등으로 최신 입력값을 읽을 수 있다.
     fun onFrontTextChange(value: String) {
         _uiState.update { it.copy(frontText = value) }
     }
@@ -118,10 +97,8 @@ class DeckManageViewModel(application: Application) : AndroidViewModel(applicati
         _uiState.update { it.copy(tagsText = value) }
     }
 
-    // [변경] 검색 기능 추가 (레거시에 없던 기능)
-    // 기존: 검색 없음 — 전체 목록만 표시
-    // 변경: searchQuery 변경 시 allCards에서 필터링해 visibleCards 즉시 갱신
-    //       allCards는 유지하므로 검색어를 지우면 전체 목록으로 복원됨
+    // 검색어가 바뀔 때마다 호출: allCards는 그대로 두고, visibleCards만 새로 필터링해서 갱신.
+    // (allCards를 안 건드리기 때문에 검색어를 지우면 전체 목록으로 바로 복원된다)
     fun onSearchQueryChange(value: String) {
         _uiState.update { state ->
             state.copy(
@@ -131,34 +108,34 @@ class DeckManageViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
-    // [변경] insertCardAndUpdateUi() → onAddCard()
-    // 기존: items.add(0, CardUi(...)) + adapter.notifyItemInserted(0) + rvCards.scrollToPosition(0)
-    //       입력 필드 초기화는 binding.etFront.setText("") 등으로 직접 처리
-    // 변경: DB insert 후 allCards 앞에 새 카드 추가
-    //       입력 필드 초기화(frontText="", ...)까지 _uiState.update 한 번으로 처리
+    // "추가" 버튼을 눌렀을 때 호출.
     fun onAddCard() {
         val state = _uiState.value
-        // 유효성 검사: deckId 미설정 또는 앞면/뒷면이 비어있으면 무시
+        // 유효성 검사: 덱이 아직 안 정해졌거나, 앞면/뒷면이 비어있으면 그냥 무시.
+        // [문법] "  ".isBlank() → 공백만 있거나 완전히 빈 문자열이면 true.
         if (state.deckId < 0L || state.frontText.isBlank() || state.backText.isBlank()) return
 
         viewModelScope.launch {
             val entity = CardEntity(
                 deckId = state.deckId,
+                // [문법] "  hi  ".trim() → 문자열 앞뒤 공백만 제거.
                 front = state.frontText.trim(),
                 back = state.backText.trim(),
                 tags = state.tagsText.trim(),
                 state = 0,
                 status = CARD_NEW  // 새 카드는 항상 NEW 상태로 시작
             )
-            // IO 스레드에서 DB insert → 생성된 row id 반환
             val newId = withContext(Dispatchers.IO) { db.cardDao().insert(entity) }
             val newCard = CardUi(newId, entity.front, entity.back, entity.tags, 0, CARD_NEW)
             _uiState.update { current ->
-                val updatedCards = listOf(newCard) + current.allCards  // 목록 맨 앞에 추가
+                // [문법] listOf(newCard) + current.allCards
+                //   리스트끼리 + 연산으로 이어붙이기. newCard를 맨 앞에 두고 기존 목록을 뒤에 붙여서
+                //   "새로 추가한 카드가 목록 맨 위에 보이게" 만든다.
+                val updatedCards = listOf(newCard) + current.allCards
                 current.copy(
                     allCards = updatedCards,
                     visibleCards = filterCards(updatedCards, current.searchQuery),
-                    frontText = "",  // 추가 완료 후 입력 필드 초기화
+                    frontText = "",  // 추가 완료 후 입력창 비우기
                     backText = "",
                     tagsText = ""
                 )
@@ -166,13 +143,7 @@ class DeckManageViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
-    // [변경] showDeleteDialog() → onDeleteRequest() + dismissDeleteDialog() + confirmDeleteCard()로 분리
-    // 기존: showDeleteDialog()에서 AlertDialog.Builder로 다이얼로그를 직접 생성하고
-    //       확인 버튼 클릭 시 deleteCardAndUpdateUi() 호출
-    // 변경: 다이얼로그의 표시/닫기/확인을 각각 함수로 분리
-    //       다이얼로그 UI는 DeckManageScreen의 if (uiState.showDeleteDialog) 블록이 담당
-
-    // 삭제 요청: 삭제할 카드를 UiState에 저장하고 다이얼로그 표시 플래그를 true로
+    // 카드 삭제 버튼을 누르면: 실제로 지우지 않고, "삭제 확인 다이얼로그"를 띄우기 위한 상태만 세팅.
     fun onDeleteRequest(card: CardUi) {
         _uiState.update {
             it.copy(
@@ -182,7 +153,7 @@ class DeckManageViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
-    // 삭제 취소: 다이얼로그 닫기, cardToDelete 초기화
+    // 삭제 확인 다이얼로그에서 "취소"를 누르면 호출.
     fun dismissDeleteDialog() {
         _uiState.update {
             it.copy(
@@ -192,17 +163,19 @@ class DeckManageViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
-    // [변경] deleteCardAndUpdateUi() → confirmDeleteCard()
-    // 기존: items.indexOfFirst { it.id == card.id } → items.removeAt(idx) + adapter.notifyItemRemoved(idx)
-    // 변경: filter로 해당 id를 제외한 새 리스트를 만들어 _uiState.update로 반영
-    //       allCards와 visibleCards 모두 갱신
+    // 삭제 확인 다이얼로그에서 "확인"을 누르면 호출: 실제로 DB에서 삭제.
     fun confirmDeleteCard() {
+        // [문법] state.cardToDelete ?: return
+        //   ?: (엘비스 연산자): 왼쪽 값이 null이면 오른쪽 코드를 실행. 여기서는
+        //   "삭제할 카드가 지정 안 돼 있으면 함수를 여기서 끝낸다"는 방어 코드.
         val card = _uiState.value.cardToDelete ?: return
         viewModelScope.launch {
             withContext(Dispatchers.IO) {
                 db.cardDao().deleteById(card.id)
             }
             _uiState.update { state ->
+                // [문법] list.filter { 조건 }  → 조건을 만족하는 원소만 남긴 새 리스트를 만듦.
+                //   여기서는 "삭제 대상과 id가 다른 것들만" 남겨서 자연스럽게 삭제 효과를 낸다.
                 val updatedCards = state.allCards.filter { it.id != card.id }
                 state.copy(
                     allCards = updatedCards,
@@ -214,13 +187,8 @@ class DeckManageViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
-    // [변경] showEditDialog() → onEditRequest() + confirmEditCard() + dismissEditDialog()로 분리
-    // 기존: showEditDialog()에서 AlertDialog.Builder + EditText.setText()로 기존 값을 채우고
-    //       확인 버튼 클릭 시 updateCardAndUpdateUi() 호출
-    // 변경: 수정 대상 카드와 현재 입력값을 UiState에 저장
-    //       다이얼로그 UI는 DeckManageScreen의 if (uiState.showEditDialog) 블록이 담당
-
-    // 수정 요청: 수정할 카드와 현재 값을 UiState에 저장, 다이얼로그 표시 플래그를 true로
+    // 카드 수정(연필 아이콘 등) 버튼을 누르면: 수정 다이얼로그를 띄우고, 입력창들을
+    // 지금 카드의 값으로 미리 채워 넣는다.
     fun onEditRequest(card: CardUi) {
         _uiState.update {
             it.copy(
@@ -233,7 +201,7 @@ class DeckManageViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
-    // 수정 다이얼로그의 각 입력 필드 변경 이벤트
+    // 수정 다이얼로그 안의 입력창들이 바뀔 때마다 호출되는 콜백들.
     fun onEditFrontChange(value: String) {
         _uiState.update { it.copy(editFront = value) }
     }
@@ -246,7 +214,7 @@ class DeckManageViewModel(application: Application) : AndroidViewModel(applicati
         _uiState.update { it.copy(editTags = value) }
     }
 
-    // 수정 취소: 다이얼로그 닫기, cardToEdit 초기화
+    // 수정 다이얼로그에서 "취소"를 누르면 호출.
     fun dismissEditDialog() {
         _uiState.update {
             it.copy(
@@ -256,11 +224,7 @@ class DeckManageViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
-    // [변경] updateCardAndUpdateUi() → confirmEditCard()
-    // 기존: items[position] = CardUi(...) + adapter.notifyItemChanged(position)
-    //       position 인덱스로 직접 접근 → 리스트가 변경되면 인덱스 불일치 위험
-    // 변경: map으로 id가 일치하는 카드만 교체한 새 리스트를 _uiState.update로 반영
-    //       id 기반이므로 인덱스 불일치 문제 없음
+    // 수정 다이얼로그에서 "확인"을 누르면 호출: DB를 갱신하고 목록의 해당 카드만 새 값으로 교체.
     fun confirmEditCard() {
         val state = _uiState.value
         val target = state.cardToEdit ?: return
@@ -268,17 +232,19 @@ class DeckManageViewModel(application: Application) : AndroidViewModel(applicati
 
         viewModelScope.launch {
             val entity = CardEntity(
-                id = target.id,            // 기존 id 유지
+                id = target.id,            // 기존 id 그대로 유지 (같은 행을 UPDATE 해야 하므로)
                 deckId = state.deckId,
                 front = state.editFront.trim(),
                 back = state.editBack.trim(),
                 tags = state.editTags.trim(),
-                state = target.state,       // 채점 점수 유지 (수정해도 학습 상태는 그대로)
-                status = target.status      // NEW/LEARNING/REVIEW 상태 유지
+                state = target.state,       // 채점 점수는 그대로 유지 (내용 수정이 학습 진도에 영향 안 줌)
+                status = target.status      // NEW/LEARNING/REVIEW 상태도 그대로 유지
             )
             withContext(Dispatchers.IO) { db.cardDao().update(entity) }
             _uiState.update { current ->
-                // allCards에서 수정된 카드만 교체한 새 리스트 생성
+                // [문법] list.map { if (조건) 새값 else it }
+                //   전체를 순회하면서, 대상 카드만 새 값으로 바꾸고 나머지는 그대로(it) 둔 새 리스트를 만든다.
+                //   "리스트 안의 딱 하나만 바꾸기"를 흔히 이런 식으로 표현한다.
                 val updatedCards = current.allCards.map {
                     if (it.id == target.id) {
                         CardUi(
@@ -290,7 +256,7 @@ class DeckManageViewModel(application: Application) : AndroidViewModel(applicati
                             status = target.status
                         )
                     } else {
-                        it  // 나머지 카드는 그대로
+                        it  // 나머지 카드는 손대지 않고 그대로 둠
                     }
                 }
                 current.copy(
@@ -303,13 +269,12 @@ class DeckManageViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
-    // [변경] 검색 필터 함수 추가 (레거시에 없던 기능)
-    // 앞면 / 뒷면 / 태그 중 하나라도 keyword를 포함하면 결과에 포함
-    // ignoreCase = true: 대소문자 구분 없이 검색
-    // keyword가 비어있으면 전체 반환 (검색어 없음 = 필터 없음)
+    // 검색어로 카드 목록을 걸러주는 함수.
+    // 앞면 / 뒷면 / 태그 중 하나라도 검색어를 포함하면 결과에 남긴다.
+    // [문법] str.contains(keyword, ignoreCase = true) → 대소문자 구분 없이 포함 여부 검사.
     private fun filterCards(cards: List<CardUi>, query: String): List<CardUi> {
         val keyword = query.trim()
-        if (keyword.isBlank()) return cards
+        if (keyword.isBlank()) return cards  // 검색어가 없으면 필터링 없이 전체 반환
 
         return cards.filter { card ->
             card.front.contains(keyword, ignoreCase = true) ||

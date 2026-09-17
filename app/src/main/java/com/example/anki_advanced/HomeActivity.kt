@@ -8,82 +8,60 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.example.anki_advanced.completion.CompletionStudyScreen
 
-
-//HomeActivity.kt
-//│
-//│  HomeScreen을 띄워주기만
-//│   setContent { HomeScreen() }
-//HomeScreen.kt
-//│
-//│  화면 그리기만
-//│  데이터는 ViewModel
-//│
-//│  val viewModel = HomeViewModel()     ← ViewModel 연결
-//│  val decks = viewModel.decks         ← 데이터 가져오기
-//│
-//│  DeckCard(deck)                      ← 화면에 그리기
-//│  DeckCard(deck)
-//│  DeckCard(deck)
-//HomeViewModel.kt
-//│
-//│  DB 조회하고 데이터 보관
-//│
-//│  db.deckDao().getAll()    ← DB 조회
-//│  val decks = [...]        ← 결과 보관
-
+// 이 앱의 유일한 진입점(런처) Activity.
+// 화면 자체를 그리지는 않고, "어떤 화면(Screen)을 어떤 경로(route)로 오갈 수 있는지"만 정의한다.
+//
+// 전체 구조 한눈에 보기:
+//   HomeActivity.kt   → setContent { NavHost(...) } 로 내비게이션 뼈대만 세팅
+//   HomeScreen.kt      → 실제 화면 그리기 (버튼, 리스트 등). 데이터는 안 들고 ViewModel에서 받아옴
+//   HomeViewModel.kt   → DB 조회 + 상태(StateFlow) 보관. 화면은 이 값을 구독만 함
+//
+// [문법] class HomeActivity : ComponentActivity()
+//   Jetpack Compose 화면을 쓰는 Activity의 기본 부모 클래스.
+//   전통적인 AppCompatActivity + XML 대신, Compose 코드를 바로 그릴 수 있게 해준다.
 class HomeActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // [변경] setContentView(R.layout.activity_home) → setContent { }
-        // 기존: XML 파일 하나를 화면으로 지정
-        //   setContentView(R.layout.activity_home)
-        //   → activity_home.xml을 파싱해서 View 객체 트리를 만든 뒤 화면에 붙임
-        //
-        // 변경: setContent { } 블록 안의 Compose 코드가 곧 화면
-        //   XML 파일 없이 코드만으로 화면을 구성
-        //   블록 안에 쓴 Compose 함수들이 호출되면서 화면이 그려짐
+        // [문법] setContent { ... }
+        //   XML 레이아웃 파일 없이, 이 블록 안에 쓴 Compose 함수 호출들이 곧 화면이 된다.
+        //   (예전 방식은 setContentView(R.layout.activity_home) 처럼 XML을 지정했었음)
         setContent {
 
-            // navController = 화면 간 이동을 담당하는 객체
-            // 화면 이동 처리를 하나의 객체에서 모두 호출
-
-            // rememberNavController() :
-            //   Compose는 상태가 바뀔 때마다 화면을 다시 그림(recomposition)
-            //   그때마다 navController를 새로 만들면 이동 기록이 사라짐
-            //   remember = "이미 만든 객체를 기억해뒀다가 재사용"
+            // [문법] rememberNavController()
+            //   Compose는 상태가 바뀔 때마다 화면 일부를 다시 그리는데(recomposition),
+            //   그때마다 navController를 새로 만들면 지금까지의 화면 이동 기록이 날아가 버린다.
+            //   remember{}로 감싸두면 "다시 그려져도 이 객체는 새로 안 만들고 재사용"하게 된다.
             val navController = rememberNavController()
 
-            // NavHost = 화면들을 등록해두는 컨테이너
-
-            //   NavHost 안에 composable()로 화면들을 등록
-            //   화면(Screen)을 경로(route)로 관리
-            //
-
+            // [문법] NavHost(navController = ..., startDestination = "home") { composable(...) {...} ... }
+            //   화면들을 "경로(route) 문자열"로 등록해두는 컨테이너.
+            //   navController.navigate("경로")를 호출하면 여기 등록된 화면으로 전환된다.
+            //   startDestination은 앱을 처음 켰을 때 보여줄 화면의 경로.
             NavHost(
-                navController = navController, //연결할 컨트롤러
-                startDestination = "home"// 앱 첫 실행 시 보여줄 화면의 경로
+                navController = navController,
+                startDestination = "home"
             ) {
-                // composable("경로") { 보여줄 화면 }
-
-                // navController를 HomeScreen에 넘기는 이유:
-                //   HomeScreen 안에서 Study나 DeckManage로 이동할 때
-                //   navController.navigate("study/...") 를 호출해야 하기 때문
+                // composable("home") { HomeScreen(...) }
+                //   "home" 경로로 이동하면 HomeScreen을 그리라는 등록.
+                //   navController를 HomeScreen에 넘겨주는 이유: HomeScreen 내부에서
+                //   다른 화면(학습, 덱 관리 등)으로 이동할 때 navController.navigate(...)를
+                //   직접 호출해야 하기 때문.
                 composable("home") {
                     HomeScreen(navController = navController)
                 }
 
-
-                //   navController.navigate("study/${deck.id}/${deck.name}")
-                //   다른 화면으로 이동할 때 경로 자체에 이동할 화면에 넘길 값을 포함해서 이동
+                // [문법] "study/{deckId}/{deckName}" 처럼 중괄호로 감싼 부분은 "경로 변수".
+                //   navController.navigate("study/3/토익단어") 처럼 실제 값을 넣어 이동하면,
+                //   이 화면 쪽에서 backStackEntry.arguments로 그 값들을 꺼낼 수 있다.
                 composable("study/{deckId}/{deckName}") { backStackEntry ->
 
-                    // backStackEntry = 현재 화면의 경로 정보를 담은 객체
-                    // arguments = 경로에서 {} 로 선언한 변수들의 값
-                    //
-
-                    val deckId = backStackEntry.arguments// 경로에서 문자열을 받아와서 다시 long 형태로 변환
+                    // [문법] ?.getString("deckId")?.toLong() ?: return@composable
+                    //   ?. 체인: arguments가 null이면 전체가 null, 있으면 "deckId" 값을 문자열로 꺼내고,
+                    //   그걸 다시 Long으로 변환. 그 과정 중 어디서든 null이 나오면(값이 없거나
+                    //   숫자로 변환 안 되면) ?: 뒤의 코드(return@composable, "이 화면 그리기를 그냥 종료")가 실행됨.
+                    val deckId = backStackEntry.arguments
                         ?.getString("deckId")
                         ?.toLong()
                         ?: return@composable
@@ -92,7 +70,7 @@ class HomeActivity : ComponentActivity() {
                         ?.getString("deckName")
                         ?: ""
 
-                    // NavHost는 꺼낸 값을 StudyScreen에 직접 파라미터로 전달
+                    // 꺼낸 값을 StudyScreen에 파라미터로 그대로 전달.
                     StudyScreen(
                         navController = navController,
                         deckId = deckId,
@@ -100,8 +78,7 @@ class HomeActivity : ComponentActivity() {
                     )
                 }
 
-                // completion mode 학습 화면
-                // 진입 경로: navController.navigate("completionStudy/${deck.id}")
+                // 완주 모드 학습 화면. 진입 경로: navController.navigate("completionStudy/${deck.id}")
                 composable("completionStudy/{deckId}") { backStackEntry ->
                     val deckId = backStackEntry.arguments
                         ?.getString("deckId")
@@ -114,7 +91,7 @@ class HomeActivity : ComponentActivity() {
                     )
                 }
 
-                // DeckManageScreen도 StudyScreen과 동일한 패턴
+                // 덱 관리 화면. study 화면과 완전히 같은 패턴.
                 composable("deckManage/{deckId}/{deckName}") { backStackEntry ->
                     val deckId = backStackEntry.arguments
                         ?.getString("deckId")

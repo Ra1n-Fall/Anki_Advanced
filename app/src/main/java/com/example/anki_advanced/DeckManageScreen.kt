@@ -57,6 +57,8 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
 
+// 덱 하나의 카드 목록을 보고, 검색하고, 추가/수정/삭제까지 하는 화면.
+
 private val DeckBg = Color(0xFFF6F6FA)
 private val DeckSurface = Color(0xFFFFFFFF)
 private val DeckSurfaceLow = Color(0xFFF0F0F5)
@@ -69,13 +71,8 @@ private val DeckOutline = Color(0xFFACADB1)
 private val DeckError = Color(0xFFB41340)
 private val DeckTag = Color(0xFFE8E9FF)
 
-// ─────────────────────────────────────────────
-// ViewModel 진입점 — NavController, ViewModel 여기서만
-// [변경] DeckManageActivity → DeckManageScreen + DeckManageContent 분리
-// 기존: Activity에서 adapter 콜백 + AlertDialog.Builder로 다이얼로그 직접 생성
-// 변경: ViewModel 진입점(DeckManageScreen)과 순수 UI(DeckManageContent)로 분리
-// 이유: DeckManageContent는 ViewModel 없이 Preview 가능
-// ─────────────────────────────────────────────
+// ── ViewModel과 연결되는 "진입점" 컴포저블 ────────────────────────────────────
+// 실제 화면을 그리는 DeckManageContent는 ViewModel을 전혀 모르는 순수 UI라서 Preview가 가능하다.
 @Composable
 fun DeckManageScreen(
     navController: NavController? = null,
@@ -85,9 +82,7 @@ fun DeckManageScreen(
 ) {
     val uiState by viewModel.uiState.collectAsState()
 
-    // [변경] Activity onCreate의 initialLoadFromDb() → LaunchedEffect(deckId, deckName)
-    // 기존: Activity onCreate에서 intent로 deckId 받아 바로 initialLoadFromDb() 호출
-    // 변경: Compose 생명주기에 맞게 LaunchedEffect로 최초 1회 initialize() 호출
+    // deckId나 deckName이 (처음) 정해지면 ViewModel의 initialize()를 호출해 카드 목록을 불러온다.
     LaunchedEffect(deckId, deckName) {
         viewModel.initialize(deckId = deckId, deckName = deckName)
     }
@@ -95,6 +90,9 @@ fun DeckManageScreen(
     DeckManageContent(
         uiState = uiState,
         onBack = { navController?.popBackStack() },
+        // [문법] viewModel::onFrontTextChange  → "메서드 참조(method reference)"
+        //   { value -> viewModel.onFrontTextChange(value) } 람다를 짧게 쓴 것과 완전히 같다.
+        //   함수를 "그대로 값처럼" 넘기고 싶을 때, 굳이 람다로 한 번 감싸지 않아도 되는 문법.
         onFrontChange = viewModel::onFrontTextChange,
         onBackChange = viewModel::onBackTextChange,
         onTagsChange = viewModel::onTagsTextChange,
@@ -112,15 +110,9 @@ fun DeckManageScreen(
     )
 }
 
-// ─────────────────────────────────────────────
-// 순수 UI — ViewModel 없음, Preview 가능
-// [변경] RecyclerView + CardAdapter → LazyColumn + items()
-// 기존: RecyclerView.layoutManager + adapter.setOnCardMenuActionListener + adapter.notifyItem~
-// 변경: LazyColumn + items(cards, key = { it.id })로 선언적 UI 구성
-// [변경] AlertDialog.Builder → DeckManageUiState 플래그로 Compose AlertDialog 조건부 렌더링
-// 기존: showDeleteDialog(), showEditDialog()에서 AlertDialog.Builder로 직접 생성
-// 변경: uiState.showDeleteDialog / showEditDialog 값에 따라 AlertDialog 조건부 렌더링
-// ─────────────────────────────────────────────
+// ── 순수 UI — ViewModel 없이 uiState 값과 콜백들만 받아서 화면을 그린다 ────────
+// 다이얼로그(삭제 확인/수정)도 AlertDialog.Builder 같은 명령형 코드 없이,
+// uiState.showDeleteDialog / showEditDialog 값에 따라 "보여줄지 말지"만 조건문으로 표현한다.
 @Composable
 private fun DeckManageContent(
     uiState: DeckManageUiState,
@@ -154,6 +146,11 @@ private fun DeckManageContent(
             }
         }
     ) { innerPadding ->
+        // [문법] LazyColumn { item { ... } / items(list, key = { it.id }) { ... } }
+        //   Column과 달리 화면에 보이는 만큼만 실제로 그리는 "가상 스크롤 리스트".
+        //   item {}은 고정된 요소 하나, items(list) {}는 리스트를 순회하며 여러 개를 그린다.
+        //   key = { it.id }를 주면, 리스트 순서가 바뀌거나 중간 항목이 삭제돼도 Compose가
+        //   "id가 같은 건 같은 항목"으로 인식해서 불필요한 재구성/애니메이션 깨짐을 줄여준다.
         LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
@@ -204,6 +201,7 @@ private fun DeckManageContent(
         }
     }
 
+    // 삭제 확인 다이얼로그: showDeleteDialog가 true이고 삭제 대상이 있을 때만 화면에 나타난다.
     if (uiState.showDeleteDialog && uiState.cardToDelete != null) {
         AlertDialog(
             onDismissRequest = onDeleteDismiss,
@@ -235,6 +233,7 @@ private fun DeckManageContent(
         )
     }
 
+    // 수정 다이얼로그: showEditDialog가 true일 때만 나타난다.
     if (uiState.showEditDialog) {
         AlertDialog(
             onDismissRequest = onEditDismiss,
@@ -280,9 +279,7 @@ private fun DeckManageContent(
     }
 }
 
-// [변경] binding.btnAdd.setOnClickListener → onAdd 람다 콜백
-// 기존: Activity에서 btnAdd.setOnClickListener 직접 등록 후 insertCardAndUpdateUi() 호출
-// 변경: 순수 UI 함수에 onAdd 콜백 주입, 실제 처리는 DeckManageScreen에서 ViewModel에 위임
+// 상단 바: 뒤로가기 + "덱 카드 추가" 제목 + 덱 이름 + 추가 버튼 + 검색창.
 @Composable
 private fun DeckManageTopBar(
     deckName: String,
@@ -364,6 +361,8 @@ private fun SearchField(
         leadingIcon = {
             Icon(Icons.Default.Search, contentDescription = null, tint = DeckOnSurfaceMuted)
         },
+        // [문법] OutlinedTextFieldDefaults.colors(...)
+        //   입력창의 각 상태(포커스됨/안 됨)별 테두리·배경·글자색을 세세하게 지정하는 헬퍼.
         colors = OutlinedTextFieldDefaults.colors(
             focusedContainerColor = DeckSurface,
             unfocusedContainerColor = DeckSurface,
@@ -377,6 +376,7 @@ private fun SearchField(
     )
 }
 
+// 카드 빠른 추가 카드: 앞면/뒷면/태그 입력창 3개 + "추가" 버튼.
 @Composable
 private fun QuickAddCard(
     frontText: String,
@@ -429,6 +429,10 @@ private fun QuickAddCard(
                             colors = listOf(DeckPrimary, DeckPrimaryDim)
                         )
                     )
+                    // [문법] .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = onAdd)
+                    //   그냥 .clickable(onClick = onAdd)만 써도 되지만, 그러면 클릭할 때 기본
+                    //   리플(물결) 효과가 함께 나온다. indication = null로 그 기본 효과를 끄고,
+                    //   직접 만든 그라데이션 배경만 보이게 하려는 의도.
                     .clickable(
                         interactionSource = remember { MutableInteractionSource() },
                         indication = null,
@@ -448,6 +452,7 @@ private fun QuickAddCard(
     }
 }
 
+// 밑줄만 있는 스타일의 입력창 한 줄 (테두리 없이 아래쪽 구분선만).
 @Composable
 private fun DeckInputLine(
     value: String,
@@ -499,10 +504,7 @@ private fun SectionHeader(
     }
 }
 
-// [변경] CardAdapter.OnCardMenuActionListener → onEdit / onDelete 람다
-// 기존: CardAdapter에 OnCardMenuActionListener 인터페이스 등록,
-//       onMenuAction에서 actionId로 edit/delete 분기
-// 변경: 각 카드 아이템에 onEdit / onDelete 람다 직접 전달
+// 카드 목록의 한 줄: 앞면/뒷면/태그 + 상태 라벨(NEW/LEARNING/REVIEW) + 수정/삭제 버튼.
 @Composable
 private fun DeckCardRow(
     card: CardUi,
@@ -531,6 +533,8 @@ private fun DeckCardRow(
                     fontSize = 15.sp,
                     fontWeight = FontWeight.Bold,
                     maxLines = 1,
+                    // [문법] overflow = TextOverflow.Ellipsis
+                    //   maxLines를 넘는 긴 텍스트를 "…"으로 줄여서 표시하게 하는 옵션.
                     overflow = TextOverflow.Ellipsis
                 )
                 Text(
@@ -569,7 +573,7 @@ private fun DeckCardRow(
         if (card.tags.isNotBlank()) {
             Box(
                 modifier = Modifier
-                    .clip(RoundedCornerShape(999.dp))
+                    .clip(RoundedCornerShape(999.dp))  // 999dp: 사실상 완전히 둥근 알약(pill) 모양
                     .background(DeckTag)
                     .border(
                         width = 1.dp,
@@ -589,11 +593,14 @@ private fun DeckCardRow(
     }
 }
 
+// 카드 목록 맨 아래에 나오는 안내 문구.
 @Composable
 private fun BottomHint() {
     Column(
         modifier = Modifier
             .fillMaxWidth()
+            // [문법] .navigationBarsPadding()
+            //   기기 하단의 제스처 바/내비게이션 바에 콘텐츠가 가려지지 않도록 자동으로 여백을 더해줌.
             .navigationBarsPadding(),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(12.dp)
@@ -620,6 +627,7 @@ private fun BottomHint() {
     }
 }
 
+// 수정 다이얼로그에서 쓰는 입력창 (배경이 옅은 회색으로 채워진 스타일).
 @Composable
 private fun DeckInputField(
     value: String,
@@ -645,6 +653,7 @@ private fun DeckInputField(
     )
 }
 
+// 카드 상태(status) 값을 화면에 보여줄 문자열로 변환.
 private fun statusLabel(status: Int): String = when (status) {
     CARD_NEW -> "NEW"
     CARD_LEARNING -> "LEARNING"
@@ -652,6 +661,7 @@ private fun statusLabel(status: Int): String = when (status) {
     else -> "CARD"
 }
 
+// 카드 상태별로 라벨 색상을 다르게 지정 (NEW=보라, LEARNING=주황, REVIEW=초록).
 private fun statusColor(status: Int): Color = when (status) {
     CARD_NEW -> DeckPrimary
     CARD_LEARNING -> Color(0xFFF97316)
@@ -659,9 +669,13 @@ private fun statusColor(status: Int): Color = when (status) {
     else -> DeckOnSurfaceMuted
 }
 
+// ── Preview: ViewModel 없이 샘플 카드 3장으로 화면 모양을 미리 확인 ──
 @Preview(showBackground = true, backgroundColor = 0xFFF6F6FA, widthDp = 390, heightDp = 844)
 @Composable
 private fun DeckManagePreview() {
+    // [문법] MaterialTheme { ... }
+    //   Preview에서는 앱 실행 시 자동으로 적용되는 테마가 없으므로, 기본 Material 테마를
+    //   직접 씌워줘서 실제 앱과 비슷한 모양으로 미리 보이게 한다.
     MaterialTheme {
         DeckManageContent(
             uiState = DeckManageUiState(

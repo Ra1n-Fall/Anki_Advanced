@@ -24,7 +24,10 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
 
-// ── 색상 ──
+// 일반 모드(완주 모드가 아닌 기본) 학습 화면. 카드 플립 애니메이션, 채점 버튼, 되돌리기,
+// 오늘의 진행률 바, 학습 완료 화면까지 전부 이 파일 안에 있다.
+
+// ── 색상 팔레트 ──
 private val StBg            = Color(0xFFF6F6FA)
 private val StSurfaceLow    = Color(0xFFF0F0F5)
 private val StSurfaceHigh   = Color(0xFFE1E2E7)
@@ -40,13 +43,9 @@ private val StHard          = Color(0xFFFF9800)
 private val StGood          = Color(0xFF2196F3)
 private val StEasy          = Color(0xFF4CAF50)
 
-// ─────────────────────────────────────────────
-// ViewModel 진입점 — NavController, ViewModel 여기서만
-// [변경] StudyActivity → StudyScreen + StudyScreenContent 분리
-// 기존: Activity 한 클래스 안에 UI 코드(binding.*)와 로직(applyGrade 등) 혼재
-// 변경: ViewModel 진입점(StudyScreen)과 순수 UI(StudyScreenContent)로 분리
-// 이유: StudyScreenContent는 ViewModel 없이 Preview 가능
-// ─────────────────────────────────────────────
+// ── ViewModel과 연결되는 "진입점" 컴포저블 ────────────────────────────────────
+// 이 함수만 ViewModel을 알고 있고, 실제 화면을 그리는 StudyScreenContent는
+// ViewModel을 전혀 모르는 "순수 UI"로 분리돼 있어서 Preview로 바로 확인할 수 있다.
 @Composable
 fun StudyScreen(
     navController: NavController? = null,
@@ -56,28 +55,25 @@ fun StudyScreen(
 ) {
     val uiState       by viewModel.uiState.collectAsState()
     val currentCard   by viewModel.currentCard.collectAsState()
-    //       undoStackSize를 StateFlow로 노출 → Screen이 구독해서 조건부 렌더링
-    //       undoStackSize > 0 이면 QUESTION/ANSWER 분기 안 "↩ 되돌리기" 버튼 표시
+    // undoStackSize가 0보다 크면(채점한 카드가 있으면) "↩ 되돌리기" 버튼을 보여준다.
     val undoStackSize by viewModel.undoStackSize.collectAsState()
     val isLoading     by viewModel.isLoading.collectAsState()
     val progress      by viewModel.progress.collectAsState()  // 오늘 완료 수 / 전체 카드 수
 
     var isFlipped by remember { mutableStateOf(false) }
-    // [변경] refreshCardText() 제거 → 카드 바뀔 때 isFlipped 자동 리셋
-    // 기존: currentCard 교체 후 refreshCardText()로 binding.tvFront/tvBack.text 직접 갱신
-    // 변경: currentCard StateFlow 변경 시 Compose가 자동 재구성, 플립 상태만 초기화
+    // currentCard가 바뀔 때마다(새 카드로 넘어갈 때마다) 카드가 뒷면으로 뒤집힌 채 시작하지 않게 초기화.
     LaunchedEffect(currentCard) { isFlipped = false }
-    // [변경] Activity onCreate 직접 호출 → LaunchedEffect로 최초 1회 startStudy() 호출
+    // deckId가 처음 정해질 때 딱 한 번 학습 세션을 시작.
     LaunchedEffect(deckId)      { viewModel.startStudy(deckId) }
 
     StudyScreenContent(
         uiState       = uiState,
         currentCard   = currentCard,
-        undoStackSize = undoStackSize,  // 언두 버튼 표시 여부 결정용
+        undoStackSize = undoStackSize,  // 되돌리기 버튼 표시 여부 결정용
         isLoading     = isLoading,
         isFlipped     = isFlipped,
-        doneToday     = progress.done,   // 오늘 완료한 리뷰 수
-        totalToday    = progress.total,  // 완료 + 남은 카드 수 (동적 갱신)
+        doneToday     = progress.done,   // 오늘 완료한 채점 수
+        totalToday    = progress.total,  // 완료 + 남은 카드 수 (학습 중 계속 갱신됨)
         onShowAnswer  = { isFlipped = true; viewModel.showAnswer() },
         onGrade       = { viewModel.applyGrade(it) },
         onUndo        = { viewModel.undoLast() },
@@ -85,30 +81,19 @@ fun StudyScreen(
     )
 }
 
-// ─────────────────────────────────────────────
-// 순수 UI — ViewModel 없음, Preview 가능
-// uiState 값에 따라 Compose의 when 분기가 자동으로 UI 구성
+// ── 순수 UI 부분 — ViewModel 없이 uiState 값만 보고 화면 구성을 분기함 ─────────
 //
-// ── onShowAnswer 클릭 연결 흐름 — "정답 보기" 버튼 ──
-// 정답 보기 버튼 클릭
-//   → onClick = onShowAnswer 람다 실행      (QUESTION 분기 안 Button)
-//     → onShowAnswer() 콜백 호출            (StudyScreenContent에서 받아 실행)
-//       → { isFlipped = true; viewModel.showAnswer() }  (StudyScreen에서 연결)
-//         → isFlipped = true  → animateFloatAsState 트리거 → 카드 플립 애니메이션 시작
-//         → viewModel.showAnswer() → _uiState.value = ANSWER → 채점 버튼 표시
-
+// 콜백들이 실제로 눌렸을 때 어떤 일이 일어나는지 한눈에 보기:
 //
-// ── 언두 클릭 연결 흐름 — "↩ 되돌리기" 버튼 ──
-// ↩ 되돌리기 클릭
-//   → onClick = onUndo 람다 실행            (QUESTION/ANSWER 분기 안 TextButton)
-//     → onUndo() 콜백 호출                  (StudyScreenContent에서 받아 그대로 전달)
-//       → { viewModel.undoLast() }          (StudyScreen에서 ViewModel과 최초 연결)
-//         → StudyViewModel.undoLast() 실행
-//           → DB 로그 삭제 + 카드 상태 복구
-//           → _currentCard.value = undo.prevCard  (이전 카드 화면에 복원)
-//           → _uiState.value = QUESTION           (앞면 보기 상태로 복귀)
-
-// ─────────────────────────────────────────────
+// "정답 보기" 버튼 → onShowAnswer() 호출
+//   → { isFlipped = true; viewModel.showAnswer() }  (StudyScreen에서 연결)
+//     → isFlipped = true → 카드 플립 애니메이션 시작
+//     → viewModel.showAnswer() → uiState가 ANSWER로 바뀜 → 채점 버튼들이 나타남
+//
+// "↩ 되돌리기" 버튼 → onUndo() 호출
+//   → { viewModel.undoLast() }
+//     → DB에서 방금 채점 로그를 지우고 카드를 이전 상태로 복구
+//     → currentCard, uiState가 그 결과로 자동 갱신됨
 @Composable
 fun StudyScreenContent(
     uiState: StudyUiState,
@@ -116,24 +101,26 @@ fun StudyScreenContent(
     undoStackSize: Int,
     isLoading: Boolean,
     isFlipped: Boolean,
-    doneToday: Int,   // 오늘 완료한 리뷰 수 → 프로그레스 바 분자
-    totalToday: Int,  // 완료 + 남은 카드 수 → 프로그레스 바 분모
+    doneToday: Int,   // 진행률 바의 분자 (오늘 완료한 채점 수)
+    totalToday: Int,  // 진행률 바의 분모 (완료 + 남은 카드 수)
     onShowAnswer: () -> Unit,
     onGrade: (Int) -> Unit,
     onUndo: () -> Unit,
     onBack: () -> Unit
 ) {
-//
-//    isFlipped가 false → true로 변경되면
-//    targetValue가 0f → 180f로 변경
-//    400ms 동안 targetValue 값이 0에서 180으로 부드럽게 증가
-//    리컴포지션마다 by키워드로 state.value 즉, rotation = targetValue
+    // [문법] val rotation by animateFloatAsState(targetValue = ..., animationSpec = tween(400))
+    //   "목표값이 바뀌면 그 값까지 애니메이션으로 부드럽게 이동하는 Float 상태"를 만들어주는 함수.
+    //   isFlipped가 false→true로 바뀌면 targetValue가 0f→180f로 바뀌고, rotation 값이
+    //   400ms 동안 0에서 180까지 서서히 올라간다. 이 값을 그대로 카드 회전각으로 쓴다.
     val rotation by animateFloatAsState(
         targetValue = if (isFlipped) 180f else 0f,
         animationSpec = tween(durationMillis = 400),
         label = "cardFlip"
     )
 
+    // [문법] Scaffold(topBar = { ... }) { innerPadding -> ... }
+    //   화면의 기본 뼈대(상단바, 본문 등)를 잡아주는 Material Design 컴포저블.
+    //   본문 블록이 받는 innerPadding은 "상단바 높이만큼은 겹치지 않게 비워둬야 하는 여백"이다.
     Scaffold(
         topBar = {
             StudyTopBar(onBack = onBack)
@@ -141,7 +128,7 @@ fun StudyScreenContent(
         containerColor = StBg
     ) { innerPadding ->
         when (uiState) {
-            StudyUiState.DONE -> DoneContent(//학습완료 화면 띄우기
+            StudyUiState.DONE -> DoneContent(  // 학습 완료 화면
                 modifier = Modifier.fillMaxSize().padding(innerPadding),
                 onBack = onBack
             )
@@ -150,8 +137,8 @@ fun StudyScreenContent(
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 StudyProgressBar(
-                    doneToday  = doneToday,   // ViewModel의 _progress.done 값
-                    totalToday = totalToday,  // ViewModel의 _progress.total 값
+                    doneToday  = doneToday,
+                    totalToday = totalToday,
                     modifier   = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 24.dp, vertical = 8.dp)
@@ -159,11 +146,13 @@ fun StudyScreenContent(
 
                 Spacer(Modifier.weight(1f))
 
-                // 플래시카드 (플립)
-                // [변경] binding.tvFront/tvBack.visibility 토글 → Y축 회전 플립 애니메이션으로 교체
-                // 기존: showCard()에서 binding.tvBack.visibility = VISIBLE
-                // 변경: graphicsLayer { rotationY }로 카드 플립 구현
-                //       rotation <= 90f 이면 앞면(FrontFace), 초과 시 뒷면(BackFace) 렌더링
+                // 플래시카드 (앞면 ↔ 뒷면 플립 애니메이션)
+                // [문법] Modifier.graphicsLayer { rotationY = rotation; cameraDistance = 12f * density }
+                //   graphicsLayer는 회전·확대·그림자 같은 그래픽 효과를 이 컴포저블에 적용하는 Modifier.
+                //   rotationY는 Y축(세로축) 기준 회전각. cameraDistance를 키우면 회전할 때
+                //   원근감(입체적으로 보이는 정도)이 더 자연스러워진다.
+                //   rotation이 90도를 기준으로 앞면/뒷면을 바꿔 그린다 (실제로 두 면을 다 그려두고
+                //   각도에 따라 어느 쪽을 보여줄지만 코드로 스위칭하는 방식).
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -172,13 +161,13 @@ fun StudyScreenContent(
                         .graphicsLayer { rotationY = rotation; cameraDistance = 12f * density }
                 ) {
                     if (rotation <= 90f) {
-                        FrontFace(card = currentCard)   // 0° ~ 90° : 앞면 표시
-                    } else {                            // 90° ~ 180° : 뒷면 표시
+                        FrontFace(card = currentCard)   // 0°~90° 구간: 앞면 표시
+                    } else {                            // 90°~180° 구간: 뒷면 표시
                         BackFace(
                             card = currentCard,
+                            // 뒷면은 부모가 이미 180도 돌아간 상태로 그려지므로, 여기서 다시 180도를
+                            // 더 돌려 "거울에 비친 것처럼 글자가 뒤집혀 보이는" 문제를 상쇄시킨다.
                             modifier = Modifier.graphicsLayer { rotationY = 180f }
-                            // 뒷면은 이미 180° 회전된 상태에서 렌더링되므로
-                            // 추가로 180° 더 돌려서 텍스트가 거울 반전되지 않도록 보정
                         )
                     }
                 }
@@ -187,7 +176,7 @@ fun StudyScreenContent(
 
                 when (uiState) {
                     StudyUiState.QUESTION -> {
-                        // undoStackSize = 0: 아직 채점한 카드 없음 → 버튼 미렌더링
+                        // 채점한 카드가 하나도 없으면(undoStackSize=0) 되돌리기 버튼 자체를 안 그림
                         if (undoStackSize > 0) {
                             Box(
                                 modifier = Modifier
@@ -195,7 +184,7 @@ fun StudyScreenContent(
                                     .padding(horizontal = 24.dp)
                             ) {
                                 TextButton(
-                                    onClick = onUndo,//버튼 연결
+                                    onClick = onUndo,
                                     modifier = Modifier.align(Alignment.CenterEnd)
                                 ) {
                                     Text("↩ 되돌리기", color = StOnSurfaceVar, fontSize = 25.sp)
@@ -203,7 +192,7 @@ fun StudyScreenContent(
                             }
                         }
                         Button(
-                            onClick = onShowAnswer,//버튼연결
+                            onClick = onShowAnswer,
                             enabled = !isLoading,
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -220,7 +209,7 @@ fun StudyScreenContent(
                         Spacer(Modifier.height(24.dp))
                     }
                     StudyUiState.ANSWER -> {
-                        // 정답을 본 뒤 채점 전에도 되돌릴 수 있음 — QUESTION과 동일한 onUndo 람다
+                        // 정답을 본 뒤, 채점하기 전에도 되돌릴 수 있다 — QUESTION과 같은 onUndo 사용
                         if (undoStackSize > 0) {
                             Box(
                                 modifier = Modifier
@@ -241,6 +230,9 @@ fun StudyScreenContent(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .background(
+                                    // [문법] Brush.verticalGradient(...)
+                                    //   단색이 아니라 "위에서 아래로 점점 색이 바뀌는" 배경을 그리는 붓.
+                                    //   여기서는 투명 → 배경색으로 자연스럽게 섞이도록 만든다.
                                     Brush.verticalGradient(
                                         colors = listOf(Color.Transparent, StBg),
                                         startY = 0f, endY = 60f
@@ -264,20 +256,13 @@ fun StudyScreenContent(
     }
 }
 
-
-// ── onBack 클릭 연결 흐름 — X 버튼(TopBar) / "홈으로" 버튼(DoneContent) ──
-// X 버튼(TopBar) 또는 홈으로 버튼(DoneContent) 클릭
-//   → onClick = onBack 람다 실행            (StudyTopBar의 IconButton / DoneContent의 Button)
-//     → onBack() 콜백 호출                  (StudyScreenContent에서 받아 그대로 전달)
-//       → { navController?.popBackStack() } (StudyScreen에서 NavController와 최초 연결)
-//         → 이전 화면(홈)으로 복귀
-//         → navController?. 의 ? : null-safe — null(Preview 등)이면 아무것도 안 함
-
+// ── 상단 바: 왼쪽 프로필 아이콘 + 가운데 앱 이름 + 오른쪽 닫기(X) 버튼 ─────────
 @Composable
 private fun StudyTopBar(onBack: () -> Unit) {
     Box(
         modifier = Modifier
             .fillMaxWidth()
+            // [문법] color.copy(alpha = 0.85f) → 같은 색인데 투명도(alpha)만 바꾼 새 Color를 만듦.
             .background(StBg.copy(alpha = 0.85f))
             .padding(horizontal = 20.dp, vertical = 12.dp)
     ) {
@@ -307,13 +292,12 @@ private fun StudyTopBar(onBack: () -> Unit) {
     }
 }
 
-// ── 진행 바 ──
+// ── 진행률 바: "오늘의 학습 · N / M" + 막대 그래프 ─────────────────────────────
 @Composable
 private fun StudyProgressBar(doneToday: Int, totalToday: Int, modifier: Modifier = Modifier) {
-    // totalToday = 0이면 0f 고정 (초기 로딩 전 division by zero 방지)
-    // totalToday > 0이면 done / total 비율 (0f ~ 1f)
+    // totalToday가 0이면(아직 로딩 전) 0으로 나누는 사고를 피하려고 0f로 고정.
     val fraction = if (totalToday > 0) doneToday.toFloat() / totalToday.toFloat() else 0f
-    // fraction이 바뀌면 600ms 동안 이전 값에서 새 값으로 부드럽게 보간
+    // fraction이 바뀌면 600ms 동안 이전 값에서 새 값으로 부드럽게 이어지는 애니메이션.
     val progress by animateFloatAsState(
         targetValue = fraction,
         animationSpec = tween(600),
@@ -339,7 +323,7 @@ private fun StudyProgressBar(doneToday: Int, totalToday: Int, modifier: Modifier
     }
 }
 
-// ── 앞면 ──
+// ── 카드 앞면 ──
 @Composable
 private fun FrontFace(card: CardEntity?, modifier: Modifier = Modifier) {
     Card(
@@ -362,6 +346,9 @@ private fun FrontFace(card: CardEntity?, modifier: Modifier = Modifier) {
                 verticalArrangement = Arrangement.Center
             ) {
                 Text(
+                    // [문법] card?.tags?.isNotBlank() == true
+                    //   card가 null이거나 tags가 비어있으면 이 비교 전체가 false가 되어 else 문구를 씀.
+                    //   ?. 체인 끝에 == true를 붙여 "null이 아니고 조건도 참일 때만"을 한 줄로 표현하는 관용구.
                     text = if (card?.tags?.isNotBlank() == true) card.tags.uppercase() else "VOCABULARY",
                     color = StOnSurfaceVar.copy(alpha = 0.6f),
                     fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp
@@ -378,7 +365,7 @@ private fun FrontFace(card: CardEntity?, modifier: Modifier = Modifier) {
     }
 }
 
-// ── 뒷면 ──
+// ── 카드 뒷면 ──
 @Composable
 private fun BackFace(card: CardEntity?, modifier: Modifier = Modifier) {
     Card(
@@ -419,71 +406,59 @@ private fun BackFace(card: CardEntity?, modifier: Modifier = Modifier) {
     }
 }
 
-// ── 채점 버튼 행 ──
-// ── GradeButton 클릭 연결 흐름 — 채점 버튼 (다시/어려움/좋음/쉬움) ──
-// GradeButton 클릭
-//   → { onGrade(0~3) } 람다 실행          (GradeButtonRow에서 주입)
-//     → onGrade(Int) 콜백 호출             (StudyScreenContent에서 받아 그대로 전달)
-//       → { viewModel.applyGrade(it) }     (StudyScreen에서 ViewModel과 최초 연결)
-//         → StudyViewModel.applyGrade(score) 실행
-// StudyScreenContent / GradeButtonRow / GradeButton 은 ViewModel을 전혀 모름
-// 콜백 람다만 받아서 아래로 전달 → ViewModel 없이 Preview 가능한 구조
-// isLoading StateFlow를 각 버튼의 disabled 파라미터에 연결하여 버튼 활성화 제어
+// ── 채점 버튼 4개를 한 줄로 배치 ──
+// 각 버튼 클릭 → { onGrade(n) } 람다 실행 → onGrade(Int) 콜백 호출
+//   → StudyScreen에서 { viewModel.applyGrade(it) }로 연결돼 있어 최종적으로 ViewModel까지 전달된다.
+// 이 컴포저블들은 ViewModel을 전혀 모르고 "콜백 람다"만 받아서 위로 전달하기 때문에
+// ViewModel 없이도 Preview로 미리보기가 가능하다.
 @Composable
 private fun GradeButtonRow(isLoading: Boolean, onGrade: (Int) -> Unit, modifier: Modifier = Modifier) {
-    // weight(1f) 4개 → Row 너비를 4등분해서 각 버튼이 동일한 폭 차지
+    // weight(1f)를 넷 다 줘서 Row 너비를 4등분, 각 버튼이 똑같은 폭을 차지하게 한다.
     Row(modifier = modifier, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         GradeButton("다시",   "1분", StAgain, isLoading, Modifier.weight(1f)) { onGrade(0) }
         GradeButton("어려움", "2일", StHard,  isLoading, Modifier.weight(1f)) { onGrade(1) }
         GradeButton("좋음",   "4일", StGood,  isLoading, Modifier.weight(1f)) { onGrade(2) }
         GradeButton("쉬움",   "7일", StEasy,  isLoading, Modifier.weight(1f)) { onGrade(3) }
-        // 마지막 파라미터 { onGrade(n) } 가 GradeButton의 onClick 람다로 전달됨
-        // 클릭 시 Button(onClick = onClick) 에 의해 실행
     }
 }
 
-
-// disabled : true이면 버튼 비활성화 (isLoading 값이 들어옴)
-// onClick  : 클릭 시 실행할 람다 — GradeButtonRow에서 { onGrade(n) } 이 주입됨
+// 채점 버튼 하나. disabled가 true면(로딩 중이면) 클릭이 막힌다.
 @Composable
 private fun GradeButton(
     label: String, timeHint: String, color: Color,
     disabled: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit
 ) {
     Button(
-        onClick = onClick,          // 클릭 시 주입된 람다 실행 → onGrade(n) → viewModel.applyGrade(n)
-        enabled = !disabled,        // disabled = true(로딩 중)이면 클릭 차단
+        onClick = onClick,
+        enabled = !disabled,
+        // 바깥에서 받은 modifier(weight 등)에 이어서 height를 체이닝. 체이닝 순서가
+        // "먼저 weight로 폭을 잡고, 그다음 height로 높이를 고정"이라는 의미가 된다.
         modifier = modifier.height(72.dp),
-        // 외부에서 받은 modifier(weight 등)에 height를 체이닝
-        // modifier.height() 순서: 외부 modifier 먼저, height 나중
         colors = ButtonDefaults.buttonColors(
-            containerColor = StSurfaceLow,                      // 활성 배경 (연한 회색)
-            contentColor   = color,                             // 활성 텍스트 색 (난이도 색상)
-            disabledContainerColor = StSurfaceLow.copy(alpha = 0.5f), // 비활성 배경 (반투명)
-            disabledContentColor   = color.copy(alpha = 0.4f)        // 비활성 텍스트 (흐리게)
-            // enabled = false 이면 자동으로 disabled~ 색상으로 교체됨
+            containerColor = StSurfaceLow,                            // 활성 상태 배경 (연한 회색)
+            contentColor   = color,                                   // 활성 상태 텍스트 색 (난이도별 고유 색)
+            disabledContainerColor = StSurfaceLow.copy(alpha = 0.5f), // 비활성 상태 배경 (반투명)
+            disabledContentColor   = color.copy(alpha = 0.4f)         // 비활성 상태 텍스트 (흐리게)
+            // enabled = false가 되면 Button이 자동으로 disabled~ 쪽 색상을 사용한다.
         ),
         shape = RoundedCornerShape(24.dp),
+        // [문법] PaddingValues(4.dp) → 버튼 내부 콘텐츠와 버튼 테두리 사이의 여백을 지정하는 객체.
         contentPadding = PaddingValues(4.dp),
-
         elevation = ButtonDefaults.buttonElevation(0.dp, 0.dp, 0.dp)
-
     ) {
-
         Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+            // alpha를 낮춰서 보조 정보(예상 간격)임을 시각적으로 흐리게 표현
             Text(timeHint, fontSize = 10.sp, fontWeight = FontWeight.Bold, color = StOnSurfaceVar.copy(alpha = 0.6f))
-            // alpha = 0.6 → 흐리게 처리해 보조 정보임을 시각적으로 표현
             Spacer(Modifier.height(2.dp))
+            // 난이도 고유 색을 그대로 써서 버튼끼리 색으로 구분되게 함
             Text(label, fontSize = 13.sp, fontWeight = FontWeight.Bold, color = color)
-            // 난이도 고유 색상 그대로 → 각 버튼을 색으로 구분
             Spacer(Modifier.height(4.dp))
             Box(modifier = Modifier.size(6.dp).background(color.copy(alpha = 0.25f), CircleShape))
-
         }
     }
 }
 
-// ── 학습 완료 ──
+// ── 학습 완료 화면 ──
 @Composable
 private fun DoneContent(modifier: Modifier = Modifier, onBack: () -> Unit) {
     Column(
@@ -503,9 +478,7 @@ private fun DoneContent(modifier: Modifier = Modifier, onBack: () -> Unit) {
     }
 }
 
-// ─────────────────────────────────────────────
-// Preview — ViewModel 없음
-// ─────────────────────────────────────────────
+// ── Preview: ViewModel 없이 세 가지 상태(질문/답/완료)를 각각 미리 확인 ──
 @Preview(showBackground = true, backgroundColor = 0xFFF6F6FA)
 @Composable
 fun StudyScreenQuestionPreview() {

@@ -1,20 +1,10 @@
 package com.example.anki_advanced
 
-// =====================================================
-// HomeScreen.kt — Stitch "홈 화면 (메뉴 버튼 위치 조정)"
-// =====================================================
-//
-// 역할:
-// - 덱 목록 표시 (각 덱마다 new/learn/review 카운트)
+// 앱을 켜면 가장 먼저 보이는 홈 화면.
+// - 덱 목록과 각 덱의 new/learn/review 카드 수 표시
 // - 오늘의 학습 진행률 표시
-// - 덱 추가/삭제 기능
-// - 학습 시작, 카드 관리, 덱 설정 화면으로 이동
-//
-// 주요 특징:
-// - Google Stitch 디자인 시스템 기반
-// - DisposableEffect로 onResume 등가 구현 (학습 후 복귀 시 카운트 갱신)
-// - DropdownMenu로 덱별 메뉴 제공
-// =====================================================
+// - 덱 추가/삭제, 완주 모드 설정
+// - 학습 화면 · 카드 관리 화면 · 덱 설정 화면으로 이동하는 진입점
 
 import android.content.Intent
 import androidx.compose.foundation.background
@@ -96,52 +86,7 @@ import androidx.navigation.NavController
 import com.example.anki_advanced.completion.CompletionModeConfigEntity
 import java.util.Calendar
 
-// =====================================================
-// 홈 화면 전체 흐름도
-// =====================================================
-//
-// 1. HomeActivity에서 HomeScreen()을 띄운다.
-// 2. HomeScreen은 HomeViewModel의 상태를 구독한다.
-//    - decks: 덱 목록
-//    - todayProgress: 오늘 진행률
-//    - todayStudied: 오늘 학습한 카드 수
-//
-// 3. 실제 데이터 준비는 HomeViewModel이 한다.
-//    - DB에서 덱 목록을 읽는다.
-//    - 각 덱의 new / learn / review 개수를 계산한다.
-//    - 오늘 학습 수와 진행률도 같이 계산한다.
-//
-// 4. HomeScreen은 계산된 상태를 받아 화면만 그린다.
-//    - WelcomeSection()        : 상단 인사 영역
-//    - DailyProgressHeroCard() : 오늘 진행률 카드
-//    - DeckSection()           : 덱 목록 영역
-//    - QuickStatsSection()     : 하단 통계 카드
-//
-// 5. 사용자가 홈 화면에서 액션을 누르면
-//    - 덱 카드 클릭           -> 학습 화면으로 이동
-//    - 더보기 메뉴            -> 관리 / 설정 / 삭제
-//    - 덱 추가 버튼           -> AddDeckDialog 표시
-//    - 삭제 확인             -> DeleteDeckDialog 표시
-//
-// 6. 다이얼로그에서 실제 추가/삭제가 확정되면
-//    - HomeScreen이 ViewModel.addDeck(), deleteDeck()를 호출한다.
-//    - ViewModel이 DB를 수정한다.
-//    - ViewModel이 다시 상태를 갱신한다.
-//    - HomeScreen이 새 상태로 자동 재구성된다.
-//
-// 7. 학습 화면에서 다시 돌아오면
-//    - DisposableEffect + ON_RESUME이 loadDecks()를 다시 호출한다.
-//    - 그래서 홈 화면 카드 수와 진행률이 최신값으로 갱신된다.
-//
-// 레거시와 비교하면:
-// - 예전: Activity + RecyclerView + Adapter + notifyDataSetChanged()
-// - 지금: ViewModel 상태 + Compose 함수 + 상태 변경 시 자동 재구성
-// =====================================================
-
-// =====================================================
-// 색상 — Stitch 디자인 토큰
-// =====================================================
-// 'Home' 접두사 = 홈 화면 전용 색상
+// ── 색상 팔레트 ──
 private val HomePrimary              = Color(0xFF4330F9)  // 주요 강조색 (보라)
 private val HomePrimaryDim           = Color(0xFF3517EE)  // 주요 강조색 (어두운 보라)
 private val HomeOnPrimary            = Color(0xFFF1EDFF)  // 주요색 위의 텍스트
@@ -160,9 +105,8 @@ private val HomeTertiaryContainer    = Color(0xFFFFD8EE)  // 3차 컨테이너 (
 private val HomeError                = Color(0xFFB41340)  // 에러/삭제 (빨강)
 private val HomeErrorDim             = Color(0xFFA70138)  // 에러 (어두운 빨강, 드롭다운 삭제 항목)
 
-// 덱 아이콘 배경색 순환
-// 각 덱마다 다른 색상 조합을 자동으로 할당 (index % 4)
-// Pair(배경색, 아이콘 색)
+// 덱 아이콘 배경색을 덱마다 돌아가며 다르게 써주기 위한 팔레트.
+// Pair(배경색, 아이콘/글자색) 4세트를 순환시켜서 index % 4로 골라 쓴다.
 private val deckIconColors = listOf(
     Pair(HomeSecondaryContainer, HomePrimary),       // 보라 계열
     Pair(HomeTertiaryContainer,  HomeTertiary),      // 분홍 계열
@@ -170,103 +114,80 @@ private val deckIconColors = listOf(
     Pair(Color(0xFFFFF3CD),      Color(0xFFF57F17)), // 노랑 계열
 )
 
-// =====================================================
-// 루트 화면 — ViewModel 진입점
-// =====================================================
-//
-// 이 함수는 NavHost에서 호출되는 진입점
-// navController와 viewModel 같은 외부 의존성을 여기서만 받음
-//
-// DisposableEffect로 onResume 등가 구현:
-// - 학습 화면에서 돌아올 때마다 덱 카운트 갱신
-// - Lifecycle.Event.ON_RESUME 감지
-// HomeScreen 읽는 순서:
-// 1. ViewModel 상태 구독
-// 2. 화면 내부에서만 쓰는 UI 상태 선언
-// 3. onResume 대응 갱신 연결
-// 4. 추가/삭제 다이얼로그 조건부 표시
-// 5. Scaffold 안에서 상단바, 진행 카드, 덱 목록, 하단 메뉴 배치
+// ── 루트 화면 — ViewModel과 연결되는 진입점 ────────────────────────────────
+// NavHost가 "home" 경로로 이동할 때 호출하는 함수. navController와 viewModel 같은
+// 외부 의존성은 여기서만 받고, 실제 화면 조립은 아래의 여러 컴포저블에 나눠 위임한다.
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-// 레거시 HomeActivity와 비교:
-// - `LoadFromDbAndRefresh()` 역할은 HomeViewModel.loadDecks()로 이동했다.
-// - HomeScreen은 더 이상 `items`, `adapter`, `notify...()`를 직접 다루지 않는다.
-// - ViewModel 상태를 구독해서 화면만 그리는 역할만 맡는다.
 fun HomeScreen(
-    navController: NavController? = null,  // 화면 이동용 (null 허용 = Preview 대응)
-    viewModel: HomeViewModel = viewModel() // viewModel()은 좌측의 타입을 보고 찾아줌
+    navController: NavController? = null,  // 화면 이동용. null이면 Preview 등 독립 실행 상황
+    viewModel: HomeViewModel = viewModel()
 ) {
-    // ViewModel에서 상태를 구독 (StateFlow → State)
-    // collectAsState()는 Flow를 Compose State로 변환
-    // StateFlow 값이 바뀌면 자동으로 UI 재구성(recomposition)
+    // ViewModel의 StateFlow들을 구독. 값이 바뀌면 이 화면이 자동으로 다시 그려진다.
     val decks         by viewModel.decks.collectAsState()          // 덱 목록
     val todayProgress by viewModel.todayProgress.collectAsState()  // 오늘 진행률 (0.0 ~ 1.0)
     val todayStudied  by viewModel.todayStudied.collectAsState()   // 오늘 학습한 카드 수
     val totalCards    by viewModel.totalCards.collectAsState()     // 전체 누적 학습 카드 수
     val streakDays    by viewModel.streakDays.collectAsState()     // 연속 학습 스트릭 (일)
 
-    // 다이얼로그 / 드롭다운 메뉴 상태 관리
-    // remember = recomposition 시에도 값 유지
+    // 다이얼로그 / 드롭다운 메뉴가 지금 열려 있는지, 어떤 덱을 대상으로 하는지를 기억해두는 상태들.
     var showAddDeckDialog         by remember { mutableStateOf(false) }
     var deckToDelete              by remember { mutableStateOf<DeckUi?>(null) }
     var expandedMenuDeckId        by remember { mutableStateOf<Long?>(null) }
     var deckForCompletionSetup    by remember { mutableStateOf<DeckUi?>(null) }  // 완주 모드 설정 대상
     var deckToDeactivate          by remember { mutableStateOf<DeckUi?>(null) }  // 일반 모드 전환 확인 대상
 
-    // LocalContext = 현재 Composable이 실행되는 Context를 가져옴
-    // Intent 생성 시 필요 (DeckSettingActivity로 이동)
+    // [문법] LocalContext.current
+    //   지금 이 컴포저블이 실행 중인 Android Context를 얻는 방법. Intent를 만들어
+    //   다른 Activity(DeckSettingActivity)를 띄울 때처럼, Compose 밖의 안드로이드 API를
+    //   써야 할 때 필요하다.
     val context = LocalContext.current
 
-    // ── onResume 등가: 학습 화면에서 돌아올 때 카운트 갱신 ──
+    // ── 다른 화면(학습 화면)에서 돌아왔을 때 카운트를 다시 불러오기 ──
     //
-    // DisposableEffect = Composable이 화면에 나타날 때/사라질 때 실행
-    // lifecycleOwner = 현재 Composable의 생명주기 소유자
+    // [문법] DisposableEffect(key) { ... onDispose { ... } }
+    //   이 컴포저블이 화면에 나타날 때 블록 안의 코드가 실행되고, 화면에서 사라질 때는
+    //   onDispose { } 안의 정리(cleanup) 코드가 실행된다. "구독을 걸고, 나중에 반드시 해제한다"는
+    //   패턴을 안전하게 표현하는 표준 도구.
     val lifecycleOwner = LocalLifecycleOwner.current
-    // 레거시 `onResume()` 갱신 로직을 여기로 옮긴 것이다.
-    // 목적은 같고, Study 화면에서 돌아오면 DB 기반 카운트를 다시 읽는다.
     DisposableEffect(lifecycleOwner) {
-        // LifecycleEventObserver = 생명주기 이벤트를 감지하는 옵저버
+        // [문법] LifecycleEventObserver { _, event -> ... }
+        //   화면(Activity)의 생명주기 이벤트(시작/재개/일시정지 등)를 감지하는 콜백.
         val observer = LifecycleEventObserver { _, event ->
-            // Lifecycle.Event.ON_RESUME = 화면이 다시 보일 때
-            // (학습 화면에서 뒤로가기로 돌아왔을 때)
+            // ON_RESUME = 이 화면이 다시 눈에 보이게 될 때 (예: 학습 화면에서 뒤로가기로 복귀)
             if (event == Lifecycle.Event.ON_RESUME) viewModel.loadDecks()
         }
-        // 옵저버 등록
         lifecycleOwner.lifecycle.addObserver(observer)
 
-        // onDispose = Composable이 화면에서 사라질 때 실행 (cleanup)
+        // 이 컴포저블이 화면에서 사라질 때 옵저버를 반드시 해제 (안 하면 메모리 누수 위험)
         onDispose {
             lifecycleOwner.lifecycle.removeObserver(observer)
         }
     }
 
     // ── 덱 추가 다이얼로그 ──
-    // showAddDeckDialog가 true일 때만 다이얼로그 표시
     if (showAddDeckDialog) {
-        // 레거시 `showAddDeckDialog()`는 Activity에서 직접 다이얼로그를 만들었다.
-        // 지금은 Boolean 상태값으로 다이얼로그 표시 여부만 제어한다.
         AddDeckDialog(
             onConfirm = { name ->
                 viewModel.addDeck(name)      // ViewModel에 덱 추가 요청
                 showAddDeckDialog = false    // 다이얼로그 닫기
             },
-            onDismiss = { showAddDeckDialog = false }  // 취소 시 다이얼로그만 닫기
+            onDismiss = { showAddDeckDialog = false }
         )
     }
 
     // ── 덱 삭제 확인 다이얼로그 ──
-    // deckToDelete가 null이 아닐 때만 다이얼로그 표시
-    // let = null이 아닐 때만 블록 실행 (스마트 캐스팅)
+    // [문법] deckToDelete?.let { deck -> ... }
+    //   deckToDelete가 null이 아닐 때만 블록을 실행하고, 그 값을 deck이라는 이름으로 쓸 수 있게 해준다.
+    //   "값이 있을 때만 이걸 그려라"를 if-null-check 없이 짧게 표현하는 관용구.
     deckToDelete?.let { deck ->
-        // 레거시 `showDeleteDeckDialog(deck)`와 같은 역할이다.
-        // 선택된 덱을 state에 넣어두고, null이 아닐 때만 삭제 확인창을 그린다.
         DeleteDeckDialog(
             deckName = deck.name,
             onConfirm = {
-                viewModel.deleteDeck(deck.id)  // ViewModel에 덱 삭제 요청
-                deckToDelete = null             // 다이얼로그 닫기
+                viewModel.deleteDeck(deck.id)
+                deckToDelete = null
             },
-            onDismiss = { deckToDelete = null }  // 취소 시 다이얼로그만 닫기
+            onDismiss = { deckToDelete = null }
         )
     }
 
@@ -302,61 +223,53 @@ fun HomeScreen(
         )
     }
 
-    // ── Scaffold = Material Design 기본 레이아웃 구조 ──
-    // topBar, bottomBar, content 영역으로 구성
+    // [문법] Scaffold(topBar = {...}, bottomBar = {...}) { innerPadding -> ... }
+    //   상단바/하단바/본문을 정해진 자리에 배치해주는 Material Design 기본 뼈대.
+    //   본문 블록이 받는 innerPadding은 상단바·하단바가 차지하는 만큼의 여백이라,
+    //   본문 콘텐츠에 이 패딩을 줘야 두 바에 안 가려진다.
     Scaffold(
-        topBar = { HomeTopBar() },  // 상단 앱바
+        topBar = { HomeTopBar() },
         bottomBar = {
             HomeBottomNav(
-                onCreateClick = { showAddDeckDialog = true },  // 만들기 버튼
-                onStatsClick  = { /* TODO: 통계 화면 */ },     // 통계 버튼
-                onSettingsClick = { /* TODO: 전체 설정 */ }    // 설정 버튼
+                onCreateClick = { showAddDeckDialog = true },
+                onStatsClick  = { /* TODO: 통계 화면 */ },
+                onSettingsClick = { /* TODO: 전체 설정 */ }
             )
         },
-        containerColor = HomeSurface  // 배경색
+        containerColor = HomeSurface
     ) { innerPadding ->
-        // innerPadding = topBar/bottomBar가 차지하는 공간
-        // 이 영역을 피해서 content를 배치해야 함
-
         Column(
             modifier = Modifier
                 .padding(innerPadding)
                 .fillMaxSize()
-                .verticalScroll(rememberScrollState())  // 세로 스크롤 가능
+                .verticalScroll(rememberScrollState())  // 내용이 길면 세로 스크롤
                 .padding(horizontal = 24.dp),
             verticalArrangement = Arrangement.spacedBy(28.dp)  // 섹션 간 간격 28dp
         ) {
             Spacer(Modifier.height(4.dp))
 
-            // 환영 섹션
             WelcomeSection()
 
-            // 오늘의 진도 히어로 카드
             DailyProgressHeroCard(
                 progress     = todayProgress,
                 studiedCount = todayStudied,
-                // 진행률 바 값은 여기서 `todayProgress`를 받아 DailyProgressHeroCard로 전달된다.
-                // 즉 바가 변하는 흐름은 HomeViewModel 계산 -> todayProgress -> 이 파라미터 전달이다.
                 onStartClick = {
-                    // 이 빠른 시작 진입점은 레거시 HomeActivity에는 없던 UX다.
-                    // 현재는 복습할 덱이 있으면 그 덱을 우선 골라 바로 학습 화면으로 보낸다.
-                    // 카드가 있는 첫 번째 덱으로 학습 시작
-                    // firstOrNull { 조건 } = 조건 만족하는 첫 항목 (없으면 null)
+                    // "빠른 시작": 학습할 카드가 남은 덱 중 첫 번째를 우선 고르고,
+                    // 없으면 그냥 목록의 첫 번째 덱으로 이동한다.
+                    // [문법] list.firstOrNull { 조건 } → 조건을 만족하는 첫 원소, 없으면 null.
                     val firstDeck = decks.firstOrNull { it.newCount + it.learnCount + it.reviewCount > 0 }
-                        ?: decks.firstOrNull()  // 학습할 카드 없으면 첫 번째 덱
+                        ?: decks.firstOrNull()
                     firstDeck?.let {
-                        // NavController로 학습 화면으로 이동
-                        // 경로에 덱 ID와 이름 포함
                         navController?.navigate("study/${it.id}/${it.name}")
                     }
                 }
             )
 
-            // 덱 섹션
             DeckSection(
                 decks          = decks,
                 expandedMenuId = expandedMenuDeckId,
                 onDeckClick    = { deck ->
+                    // 완주 모드가 켜진 덱이면 완주 모드 학습 화면으로, 아니면 일반 학습 화면으로.
                     if (deck.completionModeEndAt != null) {
                         navController?.navigate("completionStudy/${deck.id}")
                     } else {
@@ -371,6 +284,9 @@ fun HomeScreen(
                 },
                 onSettingsClick = { deck ->
                     expandedMenuDeckId = null
+                    // [문법] Intent(context, DeckSettingActivity::class.java).apply { putExtra(...) }
+                    //   Compose가 아닌 전통적인 Activity(DeckSettingActivity)를 띄우기 위한 코드.
+                    //   apply{}로 Intent를 만들자마자 extra 값들을 채워 넣는다.
                     val intent = Intent(context, DeckSettingActivity::class.java).apply {
                         putExtra("deck_id", deck.id)
                         putExtra("deckName", deck.name)
@@ -392,7 +308,6 @@ fun HomeScreen(
                 onAddDeckClick = { showAddDeckDialog = true }
             )
 
-            // 빠른 통계 섹션 (연속 학습, 총 암기 카드)
             QuickStatsSection(
                 streakDays = streakDays,
                 totalCards = totalCards
@@ -403,14 +318,11 @@ fun HomeScreen(
     }
 }
 
-// =====================================================
-// 상단 앱바 — 프로필, 타이틀, 검색
-// =====================================================
+// ── 상단 앱바: 프로필 아이콘 + 앱 이름 + 검색 버튼 ──────────────────────────
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun HomeTopBar() {
     TopAppBar(
-        // 좌측: 프로필 아이콘
         navigationIcon = {
             Box(modifier = Modifier.padding(start = 8.dp)) {
                 Icon(
@@ -418,14 +330,12 @@ private fun HomeTopBar() {
                     contentDescription = "프로필",
                     modifier = Modifier
                         .size(40.dp)
-                        .clip(CircleShape)  // 원형으로 자르기
+                        .clip(CircleShape)
                         .background(HomeSurfaceContainer),
                     tint = HomeOutline
                 )
             }
         },
-        // 중앙: 앱 이름
-        // Box로 감싸서 fillMaxWidth + Center 정렬
         title = {
             Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
                 Text(
@@ -433,11 +343,10 @@ private fun HomeTopBar() {
                     fontWeight = FontWeight.ExtraBold,
                     fontSize = 20.sp,
                     color = HomePrimary,
-                    letterSpacing = (-0.5).sp  // 글자 간격 좁히기
+                    letterSpacing = (-0.5).sp  // 글자 간격을 살짝 좁혀 로고처럼 보이게
                 )
             }
         },
-        // 우측: 검색 버튼
         actions = {
             IconButton(onClick = {}) {
                 Icon(
@@ -453,20 +362,16 @@ private fun HomeTopBar() {
     )
 }
 
-// =====================================================
-// 환영 섹션 — "오늘의 학습" + "안녕하세요!"
-// =====================================================
+// ── 환영 섹션: "오늘의 학습" + "안녕하세요!" ────────────────────────────────
 @Composable
 private fun WelcomeSection() {
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        // 상단: 작은 레이블
         Text(
             text = "오늘의 학습",
             fontSize = 14.sp,
             fontWeight = FontWeight.Medium,
             color = HomeOnSurfaceVariant
         )
-        // 하단: 큰 인사말
         Text(
             text = "안녕하세요!",
             fontSize = 28.sp,
@@ -477,90 +382,72 @@ private fun WelcomeSection() {
     }
 }
 
-// =====================================================
-// 오늘 진도 히어로 카드 — 메인 진행률 표시
-// =====================================================
-//
-// progress: 0.0 ~ 1.0 (0% ~ 100%)
-// studiedCount: 오늘 학습한 카드 수
+// ── 오늘 진도 히어로 카드: 보라색 그라데이션 배경의 메인 진행률 카드 ──────────
+// progress: 0.0 ~ 1.0, studiedCount: 오늘 학습한 카드 수
 @Composable
 private fun DailyProgressHeroCard(
     progress: Float,
     studiedCount: Int,
     onStartClick: () -> Unit
 ) {
-    // Float → Int 백분율 변환
     val progressPct = (progress * 100).toInt()
 
-    // 레거시 ViewHolder의 bind 결과물 한 줄을 Compose 함수로 옮긴 형태다.
-    // XML item layout + findViewById + setText 흐름이 이 함수 내부 UI 선언으로 대체됐다.
-    // DeckCard는 레거시 item XML + ViewHolder bind를 합쳐놓은 함수라고 보면 된다.
-    // 즉 "덱 1개를 화면에 어떻게 보일지"를 여기서 전부 결정한다.
     Box(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(24.dp))
-            // 그라데이션 배경 (좌→우)
+            // [문법] Brush.linearGradient(colors = listOf(A, B))
+            //   단색이 아니라 A색에서 B색으로 이어지는 배경을 그리는 붓.
             .background(Brush.linearGradient(colors = listOf(HomePrimary, HomePrimaryDim)))
             .padding(28.dp)
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(20.dp)) {
-            // 상단: 레이블 + 백분율
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                // "DAILY PROGRESS" 레이블
                 Text(
                     text = "DAILY PROGRESS",
                     fontSize = 11.sp,
                     fontWeight = FontWeight.SemiBold,
-                    letterSpacing = 2.sp,  // 글자 간격 넓히기
-                    color = HomeOnPrimary.copy(alpha = 0.8f)  // 약간 투명
+                    letterSpacing = 2.sp,  // 글자 간격을 넓혀 라벨처럼 보이게
+                    color = HomeOnPrimary.copy(alpha = 0.8f)
                 )
-                // 백분율 + 학습 카드 수
                 Row(
                     verticalAlignment = Alignment.Bottom,
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    // 큰 백분율
                     Text(
                         text = "$progressPct%",
                         fontSize = 48.sp,
                         fontWeight = FontWeight.ExtraBold,
                         color = HomeOnPrimary,
-                        letterSpacing = (-1).sp  // 글자 간격 좁히기
+                        letterSpacing = (-1).sp
                     )
-                    // 완료 텍스트
                     Text(
                         text = "완료  (${studiedCount}장)",
                         fontSize = 16.sp,
                         color = HomeOnPrimary.copy(alpha = 0.9f),
-                        modifier = Modifier.padding(bottom = 8.dp)  // 베이스라인 정렬
+                        modifier = Modifier.padding(bottom = 8.dp)  // 큰 글자와 baseline을 맞추기 위한 여백
                     )
                 }
             }
 
-            // 진행률 바
-            // gapSize = 0.dp, drawStopIndicator = {} → Material3 1.3 이전 외형 유지
+            // 진행률 바. progress 값이 HomeViewModel에서 계산돼 여기까지 그대로 전달된다.
             LinearProgressIndicator(
-                progress = { progress },  // 람다로 전달 (Compose 최신 API)
-                // 진행률 바가 실제로 채워지는 부분이다.
-                // 바로 위의 progress 파라미터 값에 따라 바 길이가 달라진다.
-                // 즉 "진행률에 따라 바가 변하는 로직"은 progress 전달에 연결되어 있다.
+                progress = { progress },  // [문법] progress를 람다로 감싸는 최신 Compose API 형태
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(8.dp)
                     .clip(RoundedCornerShape(4.dp)),
-                color = HomeOnPrimary,  // 진행 색상
-                trackColor = HomeOnPrimary.copy(alpha = 0.2f),  // 배경 색상
-                strokeCap = StrokeCap.Round,  // 둥근 끝
-                gapSize = 0.dp,          // gap 제거
-                drawStopIndicator = {}   // stop indicator 제거
+                color = HomeOnPrimary,
+                trackColor = HomeOnPrimary.copy(alpha = 0.2f),
+                strokeCap = StrokeCap.Round,  // 바 끝을 둥글게
+                gapSize = 0.dp,
+                drawStopIndicator = {}   // 진행 바 끝의 점 표시(stop indicator) 제거
             )
 
-            // "학습 시작하기" 버튼
             TextButton(
                 onClick = onStartClick,
                 modifier = Modifier
-                    .align(Alignment.End)  // 우측 정렬
+                    .align(Alignment.End)
                     .clip(RoundedCornerShape(50))
                     .background(HomeOnPrimary)
             ) {
@@ -575,9 +462,7 @@ private fun DailyProgressHeroCard(
     }
 }
 
-// =====================================================
-// 덱 섹션 — 덱 목록 + 새 덱 추가 카드
-// =====================================================
+// ── 덱 섹션: 덱 목록 + "새 덱 만들기" 카드 ──────────────────────────────────
 @Composable
 private fun DeckSection(
     decks: List<DeckUi>,
@@ -592,13 +477,7 @@ private fun DeckSection(
     onDeactivateModeClick: (DeckUi) -> Unit,   // 일반 모드 전환
     onAddDeckClick: () -> Unit
 ) {
-    // 레거시 RecyclerView + DeckAdapter가 하던 목록 표시 역할이 여기로 왔다.
-    // adapter/view-holder 갱신 대신, 각 DeckUi를 바로 DeckCard로 매핑한다.
-    // 여기서부터가 레거시 RecyclerView를 Compose 방식으로 바꾼 핵심 구간이다.
-    // 예전에는 adapter + onBindViewHolder + notify...()가 목록 갱신을 맡았다.
-    // 지금은 상태 리스트를 직접 순회해서 DeckCard()를 그리는 방식으로 단순화됐다.
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        // 섹션 헤더
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -620,14 +499,11 @@ private fun DeckSection(
             }
         }
 
-        // 덱 목록
-        // forEachIndexed = 인덱스와 항목을 동시에 사용
-        // 레거시 RecyclerView의 "row 생성 + bind" 루프를 Compose에서는 이 순회가 대신한다.
-        // adapter가 데이터를 꺼내 바인딩하던 대신, 여기서 각 deck을 바로 DeckCard에 넘긴다.
+        // [문법] list.forEachIndexed { index, item -> ... }
+        //   원소와 함께 "몇 번째인지(index)"도 같이 받는 반복문. 여기서는 덱마다 다른
+        //   아이콘 색을 순환시켜 쓰기 위해 index가 필요하다.
         decks.forEachIndexed { index, deck ->
-            // 이 반복 1회가 레거시의 "row 하나 bind"에 해당한다.
-            // deck 하나를 꺼내서 DeckCard 하나로 넘긴다고 보면 된다.
-            // 아이콘 색상 선택 (순환)
+            // index를 4로 나눈 나머지로 색상 팔레트를 순환시킨다 (0,1,2,3,0,1,2,3...)
             val (iconBg, iconTint) = deckIconColors[index % deckIconColors.size]
             DeckCard(
                 deck                   = deck,
@@ -645,14 +521,12 @@ private fun DeckSection(
             )
         }
 
-        // 새 덱 추가 카드 (점선 테두리)
+        // 목록 맨 아래 "새 덱 만들기" 카드 (점선 느낌의 테두리)
         AddNewDeckCard(onClick = onAddDeckClick)
     }
 }
 
-// =====================================================
-// 개별 덱 카드 — 아이콘, 이름, 통계, 메뉴
-// =====================================================
+// ── 개별 덱 카드: 아이콘 + 이름 + 통계(신규/학습중/복습) + 더보기 메뉴 ────────
 @Composable
 private fun DeckCard(
     deck: DeckUi,
@@ -668,20 +542,17 @@ private fun DeckCard(
     onCompletionSetupClick: () -> Unit,
     onDeactivateModeClick: () -> Unit
 ) {
-    // 레거시 RecyclerView 한 줄 아이템에 해당하는 Compose 버전이다.
-    // 카드 전체 클릭은 학습 시작, 오른쪽 메뉴는 덱 관련 액션을 연다.
     Box(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(24.dp))
             .background(HomeSurfaceContainerLowest)
-            .clickable { onDeckClick() }  // 카드 전체 클릭 시 학습 시작
+            .clickable { onDeckClick() }  // 카드 전체를 누르면 학습 시작
             .padding(20.dp)
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
             // ── 헤더 행: 아이콘 + 이름 + 더보기 ──
             Row(verticalAlignment = Alignment.CenterVertically) {
-                // 아이콘 (덱 이름의 첫 글자)
                 Box(
                     modifier = Modifier
                         .size(56.dp)
@@ -689,8 +560,9 @@ private fun DeckCard(
                         .background(iconBgColor),
                     contentAlignment = Alignment.Center
                 ) {
+                    // [문법] "abc".take(1) → 문자열 맨 앞 1글자만 잘라내기.
                     Text(
-                        text = deck.name.take(1).uppercase(),  // 첫 글자 대문자
+                        text = deck.name.take(1).uppercase(),
                         fontSize = 22.sp,
                         fontWeight = FontWeight.Bold,
                         color = iconTintColor
@@ -699,7 +571,6 @@ private fun DeckCard(
 
                 Spacer(Modifier.width(16.dp))
 
-                // 덱 이름 + completion 배지 + 마지막 학습 시각
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = deck.name,
@@ -707,14 +578,13 @@ private fun DeckCard(
                         fontWeight = FontWeight.Bold,
                         color = HomeOnSurface
                     )
-                    // completion mode 활성 시: "N일 플랜" 배지 + 만기일
+                    // 완주 모드가 켜진 덱이면 "N일 플랜" 배지와 만기일을 추가로 보여준다.
                     if (deck.completionModeEndAt != null && deck.completionTargetDays != null) {
                         Spacer(Modifier.height(4.dp))
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
-                            // 플랜 배지
                             Box(
                                 modifier = Modifier
                                     .clip(RoundedCornerShape(50))
@@ -728,7 +598,6 @@ private fun DeckCard(
                                     color = iconTintColor
                                 )
                             }
-                            // 만기일
                             Text(
                                 text = "만기: ${formatDate(deck.completionModeEndAt)}",
                                 fontSize = 11.sp,
@@ -745,7 +614,7 @@ private fun DeckCard(
                     )
                 }
 
-                // 더보기 버튼 + DropdownMenu
+                // 더보기(⋮) 버튼 + 눌렀을 때 뜨는 드롭다운 메뉴
                 Box {
                     IconButton(onClick = onMoreClick) {
                         Icon(
@@ -754,13 +623,9 @@ private fun DeckCard(
                             tint = HomeOutline
                         )
                     }
-                    // DropdownMenu = 팝업 메뉴
-                    // expanded = 메뉴 표시 여부
-                    // onDismissRequest = 메뉴 밖 클릭 시 호출
-                    // 레거시 PopupMenu와 같은 역할이다.
-                    // 차이는 XML 메뉴를 inflate하지 않고, 여기서 항목을 직접 선언한다는 점이다.
-                    // Stitch 화면 #6 "드롭다운 메뉴 컴포넌트 디자인" 기반:
-                    //   rounded-2xl(16dp), 흰 배경, shadow-[0_8px_30px_rgb(0,0,0,0.12)]
+                    // [문법] DropdownMenu(expanded = ..., onDismissRequest = ...) { 항목들 }
+                    //   expanded가 true일 때만 화면에 나타나는 팝업 메뉴.
+                    //   onDismissRequest는 메뉴 바깥을 탭했을 때 "닫아달라"고 알려주는 콜백이다.
                     DropdownMenu(
                         expanded = isMenuExpanded,
                         onDismissRequest = onMenuDismiss,
@@ -769,7 +634,6 @@ private fun DeckCard(
                         containerColor = HomeSurfaceContainerLowest,
                         shadowElevation = 8.dp
                     ) {
-                        // 레거시 `menu_deck_more.xml` 항목들을 지금은 Compose 코드 안에 직접 적었다.
                         DropdownMenuItem(
                             text = {
                                 Text(
@@ -830,6 +694,7 @@ private fun DeckCard(
                             onClick = onCompletionSetupClick,
                             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 2.dp)
                         )
+                        // 완주 모드가 켜진 덱에만 "일반 모드로 전환" 메뉴를 추가로 보여준다.
                         if (deck.completionModeEndAt != null) {
                             DropdownMenuItem(
                                 text = {
@@ -880,7 +745,7 @@ private fun DeckCard(
                 }
             }
 
-            // ── 통계 행: 신규/학습 중/복습 ──
+            // ── 통계 행: 신규 / 학습 중 / 복습 카드 수 ──
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
@@ -893,13 +758,15 @@ private fun DeckCard(
     }
 }
 
-// 목표 기간(일) → "N일 플랜" / "N개월 플랜"
+// 목표 기간(일)을 사람이 읽기 좋은 라벨로 변환. 28일 이상이면 "개월" 단위로 반올림 없이 나눈다.
 private fun planLabel(days: Int): String = when {
     days >= 28 -> "${days / 30}개월 플랜"
     else       -> "${days}일 플랜"
 }
 
-// ms → "YYYY.MM.DD" 형식
+// ms를 "YYYY.MM.DD" 형식 문자열로 변환.
+// [문법] "%d.%02d.%02d".format(...) → C언어 스타일의 서식 문자열.
+//   %d는 그냥 정수, %02d는 "두 자리가 안 되면 0으로 채워라"(예: 3 → "03")는 뜻.
 private fun formatDate(ms: Long): String {
     val cal = Calendar.getInstance()
     cal.timeInMillis = ms
@@ -910,7 +777,7 @@ private fun formatDate(ms: Long): String {
     )
 }
 
-// 마지막 학습 시각을 "X분 전" / "X시간 전" / "어제" / "X일 전" 형식으로 변환
+// 마지막 학습 시각을 "X분 전" / "X시간 전" / "어제" / "X일 전" 같은 상대 시간 문자열로 변환.
 private fun relativeTime(lastStudiedAt: Long?): String {
     if (lastStudiedAt == null) return "아직 없음"
     val diffMs = System.currentTimeMillis() - lastStudiedAt
@@ -926,12 +793,12 @@ private fun relativeTime(lastStudiedAt: Long?): String {
     }
 }
 
-// 통계 칩 (신규/학습 중/복습)
+// 덱 카드 안의 작은 통계 칩(신규/학습 중/복습 중 하나).
 @Composable
 private fun DeckStatChip(
-    label: String,       // 레이블 (예: "신규")
-    count: Int,          // 카드 수
-    countColor: Color,   // 카드 수 색상
+    label: String,
+    count: Int,
+    countColor: Color,
     modifier: Modifier = Modifier
 ) {
     Column(
@@ -942,14 +809,12 @@ private fun DeckStatChip(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(2.dp)
     ) {
-        // 상단: 레이블
         Text(
             text = label,
             fontSize = 11.sp,
             fontWeight = FontWeight.SemiBold,
             color = HomeOnSurfaceVariant
         )
-        // 하단: 카드 수
         Text(
             text = count.toString(),
             fontSize = 18.sp,
@@ -959,16 +824,13 @@ private fun DeckStatChip(
     }
 }
 
-// =====================================================
-// 새 덱 추가 카드 (점선 테두리)
-// =====================================================
+// ── "새로운 덱 만들기" 카드 (점선 느낌의 테두리) ────────────────────────────
 @Composable
 private fun AddNewDeckCard(onClick: () -> Unit) {
     Box(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(24.dp))
-            // border = 테두리 (점선 효과는 alpha로 구현)
             .border(2.dp, HomeOutlineVariant.copy(alpha = 0.4f), RoundedCornerShape(24.dp))
             .clickable { onClick() }
             .padding(vertical = 28.dp),
@@ -978,7 +840,6 @@ private fun AddNewDeckCard(onClick: () -> Unit) {
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            // + 아이콘
             Box(
                 modifier = Modifier
                     .size(48.dp)
@@ -993,14 +854,12 @@ private fun AddNewDeckCard(onClick: () -> Unit) {
                     modifier = Modifier.size(24.dp)
                 )
             }
-            // 타이틀
             Text(
                 "새로운 덱 만들기",
                 fontSize = 15.sp,
                 fontWeight = FontWeight.Bold,
                 color = HomeOnSurfaceVariant
             )
-            // 설명
             Text(
                 "새로운 단어장이나 학습 자료를 추가하세요",
                 fontSize = 13.sp,
@@ -1011,9 +870,7 @@ private fun AddNewDeckCard(onClick: () -> Unit) {
     }
 }
 
-// =====================================================
-// 빠른 통계 섹션 — 연속 학습 스트릭, 총 암기 카드
-// =====================================================
+// ── 빠른 통계 섹션: 연속 학습 스트릭 + 총 암기한 카드 ───────────────────────
 @Composable
 private fun QuickStatsSection(
     streakDays: Int,
@@ -1067,6 +924,7 @@ private fun QuickStatsSection(
                 tint = HomeTertiary,
                 modifier = Modifier.size(28.dp)
             )
+            // [문법] "%,d".format(totalCards) → 천 단위마다 콤마(,)를 넣어주는 서식 (예: 12345 → "12,345")
             Text(
                 text = "%,d".format(totalCards),
                 fontSize = 28.sp,
@@ -1083,14 +941,12 @@ private fun QuickStatsSection(
     }
 }
 
-// =====================================================
-// 하단 네비게이션 바 — 홈/만들기/통계/설정
-// =====================================================
+// ── 하단 내비게이션 바: 홈 / 만들기 / 통계 / 설정 ───────────────────────────
 @Composable
 private fun HomeBottomNav(
-    onCreateClick: () -> Unit,    // 만들기 버튼
-    onStatsClick: () -> Unit,     // 통계 버튼
-    onSettingsClick: () -> Unit   // 설정 버튼
+    onCreateClick: () -> Unit,
+    onStatsClick: () -> Unit,
+    onSettingsClick: () -> Unit
 ) {
     Row(
         modifier = Modifier
@@ -1106,13 +962,13 @@ private fun HomeBottomNav(
     }
 }
 
-// 하단 네비게이션 개별 아이템
+// 하단 내비게이션의 아이템 하나 (아이콘 + 라벨).
 @Composable
 private fun BottomNavItem(
-    label: String,        // 레이블 (예: "홈")
-    icon: ImageVector,    // 아이콘
-    isActive: Boolean,    // 활성 상태 (현재 화면)
-    onClick: () -> Unit   // 클릭 이벤트
+    label: String,
+    icon: ImageVector,     // [문법] ImageVector: 벡터 아이콘(Icons.Filled.* 등)을 담는 타입
+    isActive: Boolean,     // 지금 이 화면이 활성 탭인지
+    onClick: () -> Unit
 ) {
     val color = if (isActive) HomePrimary else HomeOnSurfaceVariant
 
@@ -1140,32 +996,30 @@ private fun BottomNavItem(
     }
 }
 
-// =====================================================
-// 덱 추가 다이얼로그
-// =====================================================
+// ── 덱 추가 다이얼로그 ──────────────────────────────────────────────────
 @Composable
 private fun AddDeckDialog(
-    onConfirm: (String) -> Unit,  // 확인 버튼 (덱 이름 전달)
-    onDismiss: () -> Unit          // 취소 버튼
+    onConfirm: (String) -> Unit,
+    onDismiss: () -> Unit
 ) {
-    // 다이얼로그 내부 상태 (덱 이름 입력값)
+    // 다이얼로그가 열려있는 동안만 유지되는, 입력 중인 덱 이름.
     var name by remember { mutableStateOf("") }
 
     AlertDialog(
-        onDismissRequest = onDismiss,  // 다이얼로그 밖 클릭 시
+        onDismissRequest = onDismiss,
         title = { Text("덱 추가") },
         text = {
             OutlinedTextField(
                 value = name,
                 onValueChange = { name = it },
                 label = { Text("덱 이름") },
-                singleLine = true  // 한 줄만 입력
+                singleLine = true
             )
         },
         confirmButton = {
             TextButton(
                 onClick = {
-                    if (name.isNotBlank()) onConfirm(name.trim())  // 공백 아니면 확인
+                    if (name.isNotBlank()) onConfirm(name.trim())  // 공백만 입력했으면 무시
                 }
             ) {
                 Text("추가", color = HomePrimary)
@@ -1179,14 +1033,12 @@ private fun AddDeckDialog(
     )
 }
 
-// =====================================================
-// 덱 삭제 확인 다이얼로그
-// =====================================================
+// ── 덱 삭제 확인 다이얼로그 ──────────────────────────────────────────────
 @Composable
 private fun DeleteDeckDialog(
-    deckName: String,             // 삭제할 덱 이름
-    onConfirm: () -> Unit,        // 삭제 확인
-    onDismiss: () -> Unit         // 취소
+    deckName: String,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -1205,13 +1057,14 @@ private fun DeleteDeckDialog(
     )
 }
 
-// =====================================================
-// 완주 모드 설정 다이얼로그
-// =====================================================
+// ── 완주 모드 설정 다이얼로그 (구버전) ────────────────────────────────────
+// 참고: 실제로 화면에서 쓰이는 완주 모드 설정 UI는 completion 패키지의
+// CompletionModeSetupDialog(캘린더로 날짜를 고르는 버전)이다. 이 함수는 프리셋 일수(7/14/30/60/90일)를
+// 라디오 버튼으로 고르는 이전 버전으로, 현재 이 파일 안에서는 호출되는 곳이 없다.
 @Composable
 private fun CompletionModeSetupDialog(
     deckName: String,
-    currentEndAt: Long?,   // 기존 모드가 있으면 null이 아님
+    currentEndAt: Long?,   // 기존 설정이 있으면 null이 아님
     onConfirm: (targetDays: Int, windowStart: Int, windowEnd: Int) -> Unit,
     onDismiss: () -> Unit
 ) {
@@ -1240,7 +1093,7 @@ private fun CompletionModeSetupDialog(
                     fontSize = 13.sp,
                     color = HomeOnSurfaceVariant
                 )
-                // 기간 프리셋 선택 라디오
+                // 기간 프리셋을 라디오 버튼 목록으로 나열
                 presets.forEach { days ->
                     Row(
                         modifier = Modifier
@@ -1250,6 +1103,9 @@ private fun CompletionModeSetupDialog(
                                 if (selectedDays == days) HomePrimary.copy(alpha = 0.08f)
                                 else Color.Transparent
                             )
+                            // [문법] Modifier.selectable(selected = ..., onClick = ...)
+                            //   RadioButton과 짝을 이뤄 "라디오 그룹의 항목 하나"를 표현할 때 쓰는 Modifier.
+                            //   행 전체를 눌러도 선택되도록 라디오 버튼뿐 아니라 Row에도 붙여둔다.
                             .selectable(
                                 selected = selectedDays == days,
                                 onClick = { selectedDays = days }
@@ -1289,19 +1145,11 @@ private fun CompletionModeSetupDialog(
     )
 }
 
-// =====================================================
-// Preview — ViewModel 없이 UI만 미리보기
-// =====================================================
-//
-// Preview는 실제 앱을 실행하지 않고 Android Studio에서
-// UI를 즉시 확인할 수 있는 기능
-//
-// ViewModel이나 DB 없이 더미 데이터로 UI 테스트
+// ── Preview: ViewModel 없이 더미 데이터로 화면 모양만 미리 확인 ──────────────
 @Preview(showBackground = true, widthDp = 390, heightDp = 844, name = "홈 화면 (메뉴 버튼 위치 조정)")
 @Composable
 fun HomeScreenPreview() {
     MaterialTheme {
-        // Preview용 더미 UI (ViewModel 없이)
         Box(
             modifier = Modifier
                 .fillMaxSize()
@@ -1314,15 +1162,13 @@ fun HomeScreenPreview() {
                     .verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(28.dp)
             ) {
-                Spacer(Modifier.height(72.dp)) // TopBar 공간
+                Spacer(Modifier.height(72.dp)) // TopBar가 차지할 공간만큼 미리 비워둠
 
-                // 환영 섹션
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Text("오늘의 학습", fontSize = 14.sp, color = HomeOnSurfaceVariant)
                     Text("안녕하세요!", fontSize = 28.sp, fontWeight = FontWeight.Bold, color = HomeOnSurface)
                 }
 
-                // 히어로 카드
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -1342,7 +1188,11 @@ fun HomeScreenPreview() {
                     }
                 }
 
-                // 샘플 덱
+                // 샘플 덱 2개를 하드코딩해서 카드 모양을 미리 보여준다.
+                // [문법] listOf("이름" to Triple(a, b, c)).forEachIndexed { i, (name, counts) -> ... }
+                //   "a" to b는 Pair(a, b)를 만드는 짧은 표기. Triple(a, b, c)는 값 3개를 묶는 타입.
+                //   forEachIndexed의 람다 파라미터 (name, counts)는 Pair를 "구조 분해"해서
+                //   한 번에 두 변수로 받는 문법 — component1(), component2()를 자동으로 호출해준다.
                 listOf("JLPT N1 어휘" to Triple(12, 45, 89), "데이터 사이언스" to Triple(5, 18, 32))
                     .forEachIndexed { i, (name, counts) ->
                         val (bg, tint) = deckIconColors[i]
@@ -1371,7 +1221,7 @@ fun HomeScreenPreview() {
                         }
                     }
 
-                Spacer(Modifier.height(80.dp)) // BottomNav 공간
+                Spacer(Modifier.height(80.dp)) // BottomNav가 차지할 공간만큼 미리 비워둠
             }
         }
     }
