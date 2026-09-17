@@ -1,8 +1,15 @@
 package com.example.anki_advanced.gemini
 
-// Gemini API로 주제 하나만 입력하면 카드 여러 장을 자동으로 만들어주는 화면.
-// 흐름: API 키 등록 → 주제/장수 입력 → "생성하기" → 미리보기(체크박스로 선택) → "덱으로 저장"
+// Gemini API로 주제(텍스트/이미지)만 입력하면 카드 여러 장을 자동으로 만들어주는 화면.
+// 흐름: API 키 등록 → 주제/이미지/장수 입력 → "생성하기" → 미리보기(체크박스로 선택) → "덱으로 저장"
 
+import android.Manifest
+import android.content.pm.PackageManager
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -14,6 +21,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -21,14 +29,15 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Photo
 import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -40,13 +49,20 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
 
@@ -66,6 +82,30 @@ fun DeckGenerationScreen(
     viewModel: DeckGenerationViewModel = viewModel()
 ) {
     val uiState by viewModel.uiState.collectAsState()
+    val context = LocalContext.current
+
+    // 카메라로 찍을 사진을 어디에 저장할지(임시 파일 Uri)는 촬영 버튼을 누른 시점에 정해서 기억해둔다.
+    var pendingCameraUri by remember { mutableStateOf<Uri?>(null) }
+
+    val takePictureLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.TakePicture()
+    ) { success ->
+        if (success) pendingCameraUri?.let { viewModel.onImagePicked(it) }
+    }
+
+    val cameraPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) {
+            val uri = createCameraCaptureUri(context)
+            pendingCameraUri = uri
+            takePictureLauncher.launch(uri)
+        }
+    }
+
+    val pickMediaLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.PickVisualMedia()
+    ) { uri -> uri?.let { viewModel.onImagePicked(it) } }
 
     // 저장이 끝나면 자동으로 이전 화면(홈)으로 돌아간다.
     LaunchedEffect(uiState.saveCompleted) {
@@ -108,7 +148,26 @@ fun DeckGenerationScreen(
                     onCardCountChange = viewModel::onCardCountChange,
                     onLanguageChange = viewModel::onLanguageChange,
                     onGenerateClick = viewModel::onGenerateClick,
-                    onChangeApiKey = viewModel::clearApiKey
+                    onChangeApiKey = viewModel::clearApiKey,
+                    onImageRemove = viewModel::onImageRemoved,
+                    onCameraClick = {
+                        val granted = ContextCompat.checkSelfPermission(
+                            context,
+                            Manifest.permission.CAMERA
+                        ) == PackageManager.PERMISSION_GRANTED
+                        if (granted) {
+                            val uri = createCameraCaptureUri(context)
+                            pendingCameraUri = uri
+                            takePictureLauncher.launch(uri)
+                        } else {
+                            cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
+                        }
+                    },
+                    onGalleryClick = {
+                        pickMediaLauncher.launch(
+                            PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                        )
+                    }
                 )
             }
 
@@ -172,7 +231,7 @@ private fun ApiKeySetupCard(
     }
 }
 
-// ── API 키 등록 후: 주제/장수/언어 입력 폼 ──────────────────────────────────
+// ── API 키 등록 후: 주제/이미지/장수/언어 입력 폼 ───────────────────────────
 @Composable
 private fun GenerationForm(
     uiState: DeckGenerationUiState,
@@ -180,7 +239,10 @@ private fun GenerationForm(
     onCardCountChange: (Int) -> Unit,
     onLanguageChange: (String) -> Unit,
     onGenerateClick: () -> Unit,
-    onChangeApiKey: () -> Unit
+    onChangeApiKey: () -> Unit,
+    onImageRemove: () -> Unit,
+    onCameraClick: () -> Unit,
+    onGalleryClick: () -> Unit
 ) {
     Column(
         modifier = Modifier
@@ -195,7 +257,7 @@ private fun GenerationForm(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text("어떤 주제로 만들까요?", fontWeight = FontWeight.Bold, fontSize = 16.sp, color = GenOnSurface)
+            Text("무엇으로 만들까요?", fontWeight = FontWeight.Bold, fontSize = 16.sp, color = GenOnSurface)
             TextButton(onClick = onChangeApiKey) {
                 Text("API 키 변경", fontSize = 12.sp)
             }
@@ -204,9 +266,50 @@ private fun GenerationForm(
         OutlinedTextField(
             value = uiState.topic,
             onValueChange = onTopicChange,
-            label = { Text("주제 (예: 토익 필수 단어 500)") },
+            label = { Text("주제 또는 텍스트 (예: 토익 필수 단어 500)") },
             modifier = Modifier.fillMaxWidth()
         )
+
+        // ── 이미지 첨부: 카메라 촬영 / 갤러리 선택 / 첨부된 이미지 미리보기 ──
+        if (uiState.imagePreview != null) {
+            Box(modifier = Modifier.fillMaxWidth()) {
+                Image(
+                    bitmap = uiState.imagePreview.asImageBitmap(),
+                    contentDescription = "첨부된 이미지",
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(160.dp)
+                        .clip(RoundedCornerShape(16.dp))
+                )
+                IconButton(
+                    onClick = onImageRemove,
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(6.dp)
+                        .clip(RoundedCornerShape(50))
+                        .background(Color.Black.copy(alpha = 0.5f))
+                ) {
+                    Icon(Icons.Filled.Close, contentDescription = "이미지 제거", tint = Color.White)
+                }
+            }
+        } else {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                OutlinedButton(onClick = onCameraClick, modifier = Modifier.weight(1f)) {
+                    Icon(Icons.Filled.CameraAlt, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("사진 촬영")
+                }
+                OutlinedButton(onClick = onGalleryClick, modifier = Modifier.weight(1f)) {
+                    Icon(Icons.Filled.Photo, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("갤러리에서 선택")
+                }
+            }
+        }
 
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -230,7 +333,7 @@ private fun GenerationForm(
 
         Button(
             onClick = onGenerateClick,
-            enabled = !uiState.isLoading && uiState.topic.isNotBlank(),
+            enabled = uiState.canGenerate,
             modifier = Modifier.fillMaxWidth()
         ) {
             if (uiState.isLoading) {
@@ -246,7 +349,7 @@ private fun GenerationForm(
     }
 }
 
-// ── 생성 결과 미리보기: 덱 이름 입력 + 카드 체크리스트 + 저장 버튼 ──────────
+// ── 생성 결과 미리보기: 감지된 유형 + 덱 이름 입력 + 카드 체크리스트 + 저장 버튼 ──
 @Composable
 private fun PreviewSection(
     uiState: DeckGenerationUiState,
@@ -263,12 +366,30 @@ private fun PreviewSection(
             .padding(20.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        Text(
-            "생성된 카드 (${uiState.selectedCount}/${uiState.generatedCards.size} 선택됨)",
-            fontWeight = FontWeight.Bold,
-            fontSize = 16.sp,
-            color = GenOnSurface
-        )
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                "생성된 카드 (${uiState.selectedCount}/${uiState.generatedCards.size} 선택됨)",
+                fontWeight = FontWeight.Bold,
+                fontSize = 16.sp,
+                color = GenOnSurface,
+                modifier = Modifier.weight(1f)
+            )
+            uiState.detectedCardType?.let { type ->
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(50))
+                        .background(GenPrimary.copy(alpha = 0.1f))
+                        .padding(horizontal = 10.dp, vertical = 4.dp)
+                ) {
+                    Text(
+                        "감지된 유형: ${type.label}",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = GenPrimary
+                    )
+                }
+            }
+        }
 
         OutlinedTextField(
             value = uiState.deckName,

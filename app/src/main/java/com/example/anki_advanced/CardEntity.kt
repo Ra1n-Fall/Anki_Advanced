@@ -49,5 +49,10 @@ data class CardEntity(
 
     // ↓↓↓ 완주 모드(기간 내 끝내기) 전용 필드
     val baseInterval: Long = 0L,  // 완주 모드로 압축하기 "전"의 원래 SM-2 간격(ms). 압축 비율 계산의 기준값
-    val lastReviewAt: Long = 0L   // 마지막으로 채점한 시각(ms). 진행률(progress) 계산에 사용
+    val lastReviewAt: Long = 0L,  // 마지막으로 채점한 시각(ms). 진행률(progress) 계산에 사용
+
+    // AI 자동 생성 카드가 어떤 콘텐츠 유형으로 판별됐는지 기록 ("fact"/"code"/"formula"/"timeline").
+    // 수동으로 만든 카드는 기본값 "fact"로 남는다. 지금은 저장만 해두고, 학습 화면(StudyScreen)의
+    // 실제 동작(빈칸 채우기/타이핑 등)에는 아직 반영하지 않는다.
+    val cardType: String = "fact"
 )

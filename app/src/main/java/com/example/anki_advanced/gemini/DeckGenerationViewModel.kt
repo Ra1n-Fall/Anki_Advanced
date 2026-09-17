@@ -1,6 +1,8 @@
 package com.example.anki_advanced.gemini
 
 import android.app.Application
+import android.graphics.Bitmap
+import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.anki_advanced.AppDatabase
@@ -19,6 +21,7 @@ import kotlinx.coroutines.withContext
 data class GeneratedCardUi(
     val front: String,
     val back: String,
+    val cardType: String,
     val selected: Boolean = true
 )
 
@@ -29,14 +32,17 @@ data class DeckGenerationUiState(
     val topic: String = "",
     val cardCount: Int = 10,
     val language: String = "한국어",
+    val imagePreview: Bitmap? = null,      // 첨부된 이미지 미리보기 (없으면 null)
     val isLoading: Boolean = false,
     val errorMessage: String? = null,
+    val detectedCardType: CardType? = null, // 생성 직후 Gemini가 분류한 콘텐츠 유형
     val generatedCards: List<GeneratedCardUi> = emptyList(),
     val deckName: String = "",
     val isSaving: Boolean = false,
     val saveCompleted: Boolean = false
 ) {
     val selectedCount: Int get() = generatedCards.count { it.selected }
+    val canGenerate: Boolean get() = !isLoading && (topic.isNotBlank() || imagePreview != null)
 }
 
 class DeckGenerationViewModel(application: Application) : AndroidViewModel(application) {
@@ -44,6 +50,10 @@ class DeckGenerationViewModel(application: Application) : AndroidViewModel(appli
     private val db = AppDatabase.getInstance(application)
     private val apiKeyStore = GeminiApiKeyStore(application)
     private val generator = GeminiDeckGenerator()
+
+    // Bitmap은 미리보기 겸 상태에 두지만, Gemini 전송용 압축 바이트는 별도로 들고 있는다.
+    // (StateFlow 값 자체에 큰 ByteArray를 반복 복사해 넣지 않기 위해 분리)
+    private var pendingImageBytes: ByteArray? = null
 
     private val _uiState = MutableStateFlow(
         DeckGenerationUiState(hasApiKey = apiKeyStore.getApiKey() != null)
@@ -82,7 +92,29 @@ class DeckGenerationViewModel(application: Application) : AndroidViewModel(appli
         _uiState.update { it.copy(deckName = value) }
     }
 
-    // "생성" 버튼: Gemini를 호출해서 카드 후보 목록을 만든다. 아직 DB에는 아무것도 안 쓴다.
+    // 카메라 촬영/갤러리 선택으로 얻은 Uri를 읽어서 미리보기 + 전송용 바이트로 준비.
+    fun onImagePicked(uri: Uri) {
+        viewModelScope.launch {
+            val decoded = withContext(Dispatchers.IO) {
+                decodeAndCompressImage(getApplication(), uri)
+            }
+            if (decoded == null) {
+                _uiState.update { it.copy(errorMessage = "이미지를 불러오지 못했습니다.") }
+                return@launch
+            }
+            val (bitmap, bytes) = decoded
+            pendingImageBytes = bytes
+            _uiState.update { it.copy(imagePreview = bitmap, errorMessage = null) }
+        }
+    }
+
+    fun onImageRemoved() {
+        pendingImageBytes = null
+        _uiState.update { it.copy(imagePreview = null) }
+    }
+
+    // "생성하기" 버튼: Gemini를 2단계(유형 분류 → 유형별 생성)로 호출해서 카드 후보 목록을 만든다.
+    // 아직 DB에는 아무것도 안 쓴다.
     fun onGenerateClick() {
         val state = _uiState.value
         val apiKey = apiKeyStore.getApiKey()
@@ -90,26 +122,32 @@ class DeckGenerationViewModel(application: Application) : AndroidViewModel(appli
             _uiState.update { it.copy(errorMessage = "먼저 Gemini API 키를 등록해주세요.") }
             return
         }
-        if (state.topic.isBlank()) {
-            _uiState.update { it.copy(errorMessage = "주제를 입력해주세요.") }
+        if (state.topic.isBlank() && state.imagePreview == null) {
+            _uiState.update { it.copy(errorMessage = "주제를 입력하거나 이미지를 첨부해주세요.") }
             return
         }
 
-        _uiState.update { it.copy(isLoading = true, errorMessage = null, generatedCards = emptyList()) }
+        val image = pendingImageBytes?.let { ImageInput(bytes = it) }
+
+        _uiState.update {
+            it.copy(isLoading = true, errorMessage = null, generatedCards = emptyList(), detectedCardType = null)
+        }
 
         viewModelScope.launch {
             try {
-                val cards = generator.generateCards(
+                val result = generator.generateCards(
                     apiKey = apiKey,
                     topic = state.topic.trim(),
+                    image = image,
                     count = state.cardCount,
                     language = state.language
                 )
                 _uiState.update { current ->
                     current.copy(
                         isLoading = false,
-                        generatedCards = cards.map { GeneratedCardUi(it.front, it.back) },
-                        deckName = current.deckName.ifBlank { state.topic.trim() }
+                        detectedCardType = result.cardType,
+                        generatedCards = result.cards.map { GeneratedCardUi(it.front, it.back, it.cardType) },
+                        deckName = current.deckName.ifBlank { state.topic.trim().ifBlank { result.cardType.label } }
                     )
                 }
             } catch (e: GeminiApiException) {
@@ -159,7 +197,8 @@ class DeckGenerationViewModel(application: Application) : AndroidViewModel(appli
                             front = card.front,
                             back = card.back,
                             tags = "",
-                            status = CARD_NEW
+                            status = CARD_NEW,
+                            cardType = card.cardType
                         )
                     )
                 }

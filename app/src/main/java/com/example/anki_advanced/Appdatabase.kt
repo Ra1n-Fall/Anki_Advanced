@@ -45,6 +45,14 @@ val MIGRATION_1_2 = object : Migration(1, 2) {
     }
 }
 
+// version 2 → 3에서 바뀐 점:
+// - cards 테이블에 cardType 컬럼 추가 (AI 자동 생성 카드의 콘텐츠 유형: fact/code/formula/timeline)
+val MIGRATION_2_3 = object : Migration(2, 3) {
+    override fun migrate(database: SupportSQLiteDatabase) {
+        database.execSQL("ALTER TABLE cards ADD COLUMN cardType TEXT NOT NULL DEFAULT 'fact'")
+    }
+}
+
 // [문법] @Database(entities = [...], version = 2, exportSchema = false)
 //   이 앱에 존재하는 모든 테이블(entities)과 현재 DB 버전을 Room에게 알려주는 선언부.
 //   entities 목록에 새 Entity 클래스를 추가/삭제하면 곧 테이블이 추가/삭제되는 것과 같으므로,
@@ -56,7 +64,7 @@ val MIGRATION_1_2 = object : Migration(1, 2) {
         ReviewLogEntity::class,
         CompletionModeConfigEntity::class
     ],
-    version = 2,
+    version = 3,
     exportSchema = false
 )
 // [문법] abstract class X : RoomDatabase()
@@ -105,7 +113,7 @@ abstract class AppDatabase : RoomDatabase() {
                     context.applicationContext,
                     AppDatabase::class.java,
                     "anki.db"
-                ).addMigrations(MIGRATION_1_2)
+                ).addMigrations(MIGRATION_1_2, MIGRATION_2_3)
                     // 등록 안 된 버전 변경이 발생하면(마이그레이션 규칙이 없으면)
                     // 에러를 내는 대신 기존 DB를 통째로 지우고 새로 만든다는 뜻.
                     // (개발 중엔 편하지만, 실제 서비스에선 데이터 유실 위험이 있어 주의가 필요)
