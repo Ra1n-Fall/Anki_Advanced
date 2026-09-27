@@ -62,12 +62,15 @@ data class GenerationResult(
 )
 
 // 네트워크 실패나 Gemini 응답 이상 등, 사용자에게 그대로 보여줘도 되는 실패 이유를 담는 예외.
-// [문법] class GeminiApiException(message: String) : Exception(message)
+// [문법] class GeminiApiException(message: String, val retryable: Boolean = false) : Exception(message)
 //   Exception을 상속해서 만든 커스텀 예외 타입. 코틀린/자바의 일반 Exception과 달리
 //   "우리가 의도적으로 사용자용 메시지를 실어서 던지는 실패"라는 걸 타입으로 구분해두면,
 //   catch (e: GeminiApiException) 처럼 "우리가 예상한 실패"만 따로 잡아서
 //   e.message를 그대로 화면 에러 문구로 써도 안전하다고 판단할 수 있다.
-class GeminiApiException(message: String) : Exception(message)
+//   retryable: 서버 과부하(503)나 요청 과다(429)처럼 "잠시 후 다시 하면 될 수도 있는"
+//   실패인지 표시 — 잘못된 요청(400)이나 인증 실패(401) 같은 건 재시도해도 똑같이
+//   실패할 게 뻔하므로 retryable=false로 즉시 포기한다.
+class GeminiApiException(message: String, val retryable: Boolean = false) : Exception(message)
 
 // Gemini의 generateContent REST API를 "2단계 프롬프트"로 호출해서 카드를 만들어내는 클래스.
 //
@@ -265,8 +268,41 @@ class GeminiDeckGenerator {
     // ── Gemini 호출 공통 로직 ────────────────────────────────────────────────
     // classifyCardType과 generateTypedCards 둘 다 "지시문 텍스트 + (선택)이미지 + 원하는
     // 응답 스키마"만 다르고 나머지(HTTP 요청 조립, 전송, 에러 처리, 응답에서 text 뽑기)는
-    // 완전히 똑같아서, 그 공통 부분을 이 함수 하나로 모아뒀다.
+    // 완전히 똑같아서, 그 공통 부분을 performRequest 함수 하나로 모아뒀다.
+    //
+    // executeGenerateContent 자신은 실제 요청을 보내지 않고, "실패하면 조건에 따라 다시
+    // 시도할지"만 판단하는 재시도 껍데기다. Gemini의 lite 모델도 무료 티어에서는
+    // 순간적으로 503(과부하)이 뜨는 경우가 잦다고 알려져 있어서, 사용자가 매번 손으로
+    // "생성하기"를 다시 누르지 않아도 되도록 여기서 자동으로 몇 번 더 두드려본다.
+    // 지연 시간(5초 → 15초 → 45초)은 Google이 권장하는 지수 백오프 패턴을 따른 것.
     private fun executeGenerateContent(
+        apiKey: String,
+        instructionText: String,
+        image: ImageInput?,
+        schema: JSONObject
+    ): String {
+        // [문법] RETRY_DELAYS_MS.forEachIndexed / for (delayMs in RETRY_DELAYS_MS)
+        //   아래 반복문은 "최초 시도 1번 + 재시도 최대 RETRY_DELAYS_MS.size번"을 수행한다.
+        //   재시도할 가치가 없는 실패(retryable=false)거나 마지막 재시도까지 다 써버리면
+        //   그 예외를 그대로 밖으로 던진다.
+        var lastException: GeminiApiException? = null
+        for (attempt in 0..RETRY_DELAYS_MS.size) {
+            try {
+                return performRequest(apiKey, instructionText, image, schema)
+            } catch (e: GeminiApiException) {
+                lastException = e
+                if (!e.retryable || attempt == RETRY_DELAYS_MS.size) throw e
+                Thread.sleep(RETRY_DELAYS_MS[attempt])
+            }
+        }
+        // 이론상 도달하지 않는 코드(루프 안에서 항상 return이나 throw로 끝남)지만,
+        // 컴파일러에게 "이 함수는 항상 String을 반환하거나 예외를 던진다"를 보장해주기 위한 안전망.
+        throw lastException ?: GeminiApiException("알 수 없는 오류로 요청에 실패했습니다.")
+    }
+
+    // 실제로 HTTP 요청 한 번을 조립해서 보내고 응답을 파싱하는 부분.
+    // (재시도 로직과 "진짜 네트워크 작업"을 함수로 분리해두면 각각이 하는 일이 더 분명해진다)
+    private fun performRequest(
         apiKey: String,
         instructionText: String,
         image: ImageInput?,
@@ -324,8 +360,13 @@ class GeminiDeckGenerator {
                 val bodyString = response.body?.string().orEmpty()
                 if (!response.isSuccessful) {
                     // HTTP 상태 코드가 2xx가 아니면(예: 400 잘못된 요청, 404 모델 없음,
-                    // 429 요청 과다 등) 본문에서 에러 메시지를 뽑아 예외로 던진다.
-                    throw GeminiApiException(parseErrorMessage(bodyString, response.code))
+                    // 429 요청 과다, 503 서버 과부하 등) 본문에서 에러 메시지를 뽑아 예외로 던진다.
+                    // 503(서비스 불가)과 429(요청 과다)는 "지금은 안 되지만 잠시 후엔 될 수도
+                    // 있는" 일시적 실패라서 retryable=true로 표시해 위 executeGenerateContent가
+                    // 자동으로 재시도하게 한다. 그 외(400/401/404 등)는 재시도해도 똑같이
+                    // 실패할 사용자/설정 문제라 retryable=false로 즉시 포기시킨다.
+                    val retryable = response.code == 503 || response.code == 429
+                    throw GeminiApiException(parseErrorMessage(bodyString, response.code), retryable)
                 }
                 bodyString
             }
@@ -375,7 +416,16 @@ class GeminiDeckGenerator {
         // 사용 중인 Gemini 모델. 모델 이름은 Google이 새 모델을 내놓거나 구모델을 신규
         // 사용자에게 막을 때(실제로 gemini-2.5-flash가 그래서 막혔었다) 바뀔 수 있는
         // 값이라, 코드 여기저기 흩어놓지 않고 상수 하나로 관리한다.
+        //
+        // gemini-3.6-flash(비-lite)는 무료 티어에서 503(과부하) 응답 비율이 매우 높다고
+        // 널리 보고돼 있고, 하루 요청 한도도 20건뿐이라(우리는 생성 1번에 분류+생성 2회
+        // 호출) 실질적으로 하루 10번도 못 쓰는 셈이었다. lite 계열은 같은 무료 티어에서도
+        // 하루 500건까지 허용되고 더 안정적으로 응답한다고 알려져 있어 이걸로 바꿨다.
         private const val ENDPOINT =
-            "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent"
+            "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent"
+
+        // 503/429로 실패했을 때 재시도까지 기다리는 시간(밀리초). 배열 길이만큼 재시도하고,
+        // 시도할 때마다 간격을 늘려서(5초 → 15초 → 45초) 일시적 과부하가 풀릴 시간을 벌어준다.
+        private val RETRY_DELAYS_MS = longArrayOf(5_000L, 15_000L, 45_000L)
     }
 }
