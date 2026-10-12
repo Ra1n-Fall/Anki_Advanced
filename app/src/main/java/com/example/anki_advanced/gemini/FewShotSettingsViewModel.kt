@@ -35,10 +35,11 @@ class FewShotSettingsViewModel(application: Application) : AndroidViewModel(appl
 // 편집 중인 값은 "저장"을 누르기 전까지 저장소에 쓰지 않고 이 초안(draft)에만 담아둔다 —
 // 입력 도중 뒤로 가면 아무것도 바뀌지 않게.
 
+// 예시 카드에는 세부 형태(개념 맞히기/설명하기 등)를 붙이지 않는다 — 세부 형태는 예시가 아니라
+// 유형 하나에 대한 선택이고, 덱 만들기 화면의 체크박스에서 정한다.
 data class DraftCard(
     val front: String = "",
-    val back: String = "",
-    val style: CardStyle? = null
+    val back: String = ""
 )
 
 data class DraftExample(
@@ -58,8 +59,6 @@ data class FewShotEditUiState(
     val saved: Boolean = false           // true가 되면 화면이 자동으로 닫힌다
 ) {
     val isCustom: Boolean get() = builtinType == null
-    // 기본 유형 예시 카드에서 고를 수 있는 세부 형태 (사용자 지정 유형은 빈 리스트 = 형태 선택 없음)
-    val styleOptions: List<CardStyle> get() = builtinType?.let { CardStyle.forType(it) }.orEmpty()
 }
 
 class FewShotEditViewModel(application: Application) : AndroidViewModel(application) {
@@ -114,7 +113,6 @@ class FewShotEditViewModel(application: Application) : AndroidViewModel(applicat
         updateExample(exampleIndex) { it.copy(cards = it.cards.toMutableList().apply { removeAt(cardIndex) }) }
     fun setFront(exampleIndex: Int, cardIndex: Int, value: String) = updateCard(exampleIndex, cardIndex) { it.copy(front = value) }
     fun setBack(exampleIndex: Int, cardIndex: Int, value: String) = updateCard(exampleIndex, cardIndex) { it.copy(back = value) }
-    fun setStyle(exampleIndex: Int, cardIndex: Int, style: CardStyle) = updateCard(exampleIndex, cardIndex) { it.copy(style = style) }
 
     // 기본 유형 전용: 앱에 내장된 기본 예시 5개를 초안 뒤에 복사해 붙인다.
     // 처음부터 다 쓰기보다 기본 예시를 고쳐 쓰는 편이 훨씬 빠르기 때문.
@@ -131,9 +129,9 @@ class FewShotEditViewModel(application: Application) : AndroidViewModel(applicat
         val state = _uiState.value
         val examples = state.examples.mapNotNull { draft ->
             val cards = draft.cards
-                .map { DraftCard(it.front.trim(), it.back.trim(), it.style) }
+                .map { DraftCard(it.front.trim(), it.back.trim()) }
                 .filter { it.front.isNotEmpty() && it.back.isNotEmpty() }
-                .map { ExampleCard(it.front, it.back, it.style ?: state.styleOptions.firstOrNull()) }
+                .map { ExampleCard(it.front, it.back, style = null) }
             if (draft.source.isBlank() || cards.isEmpty()) null else FewShotExample(draft.source.trim(), cards)
         }
 
@@ -167,7 +165,7 @@ class FewShotEditViewModel(application: Application) : AndroidViewModel(applicat
     }
 
     // ── 내부 헬퍼 ──
-    private fun newCard() = DraftCard(style = _uiState.value.styleOptions.firstOrNull())
+    private fun newCard() = DraftCard()
     private fun newExample() = DraftExample(cards = listOf(newCard()))
 
     private fun updateExamples(transform: (List<DraftExample>) -> List<DraftExample>) =
@@ -181,5 +179,5 @@ class FewShotEditViewModel(application: Application) : AndroidViewModel(applicat
             example.copy(cards = example.cards.mapIndexed { i, card -> if (i == cardIndex) transform(card) else card })
         }
 
-    private fun FewShotExample.toDraft() = DraftExample(source, cards.map { DraftCard(it.front, it.back, it.style) })
+    private fun FewShotExample.toDraft() = DraftExample(source, cards.map { DraftCard(it.front, it.back) })
 }

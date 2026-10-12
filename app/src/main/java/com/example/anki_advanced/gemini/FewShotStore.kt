@@ -95,7 +95,8 @@ class FewShotStore private constructor(context: Context) {
         // 저장 형식:
         // { "builtin": { "fact": { "useCustom": true, "examples": [...] }, ... },
         //   "customTypes": [ { "id", "name", "instruction", "examples": [...] } ] }
-        // example: { "source": "...", "cards": [ { "front", "back", "style"(선택, CardStyle 이름) } ] }
+        // example: { "source": "...", "cards": [ { "front", "back" } ] }
+        // 사용자 예시에는 세부 형태를 저장하지 않는다 (세부 형태는 유형 단위 선택이므로).
 
         private fun toJson(settings: FewShotSettings): JSONObject {
             val builtin = JSONObject()
@@ -125,9 +126,7 @@ class FewShotStore private constructor(context: Context) {
             examples.forEach { example ->
                 val cards = JSONArray()
                 example.cards.forEach { card ->
-                    val obj = JSONObject().put("front", card.front).put("back", card.back)
-                    card.style?.let { obj.put("style", it.name) }
-                    cards.put(obj)
+                    cards.put(JSONObject().put("front", card.front).put("back", card.back))
                 }
                 array.put(JSONObject().put("source", example.source).put("cards", cards))
             }
@@ -172,16 +171,8 @@ class FewShotStore private constructor(context: Context) {
                 val cards = mutableListOf<ExampleCard>()
                 for (j in 0 until cardsArray.length()) {
                     val card = cardsArray.getJSONObject(j)
-                    // [문법] CardStyle.entries.firstOrNull { it.name == ... }
-                    //   저장된 이름이 없거나(사용자 지정 유형) 앱 업데이트로 사라진 이름이면 null.
-                    val styleName = card.optString("style")
-                    cards.add(
-                        ExampleCard(
-                            front = card.optString("front"),
-                            back = card.optString("back"),
-                            style = CardStyle.entries.firstOrNull { it.name == styleName }
-                        )
-                    )
+                    // 예전 버전이 저장해 둔 "style" 값이 있어도 무시한다 — 사용자 예시는 형태와 무관.
+                    cards.add(ExampleCard(front = card.optString("front"), back = card.optString("back"), style = null))
                 }
                 result.add(FewShotExample(obj.optString("source"), cards))
             }

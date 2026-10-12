@@ -222,10 +222,12 @@ class GeminiDeckGenerator {
         GenerationResult(plan.label, cards)
     }
 
-    // 기본 유형의 생성 계획. 예시는 "내 예시 사용"이 켜져 있으면 사용자 예시를, 아니면 내장
-    // 예시를 쓰고, 어느 쪽이든 고른 세부 형태의 카드만 남긴다. 사용자 예시가 켜져 있어도
-    // 고른 형태에 맞는 예시가 하나도 없으면(예: "연도" 카드만 만들어 뒀는데 "사건 순서"를 고름)
-    // 내장 예시로 대신한다 — 예시가 아예 없는 것보다는 형태가 맞는 예시가 있는 편이 낫다.
+    // 기본 유형의 생성 계획.
+    //   세부 형태(styles)는 예시가 아니라 유형 하나에 대한 선택이다 — 덱 만들기 화면에서 유형별
+    //   체크박스로 고르고, 시스템 지시문(guide)에 "이 형태로만 / 섞어서" 만들라고 들어간다.
+    //   예시는 "내 예시 사용"이 켜져 있고 하나라도 있으면 사용자 예시를 그대로 쓰고, 아니면 내장
+    //   예시를 쓴다. 내장 예시는 앱이 내부적으로 형태를 알고 있어서, 고른 형태의 카드만 남겨 보낸다
+    //   (사용자 예시는 형태 정보가 없으므로 style == null → 필터에 걸리지 않고 전부 전송).
     private fun builtinPlan(type: CardType, styles: List<CardStyle>, settings: FewShotSettings): PromptPlan {
         val userSetting = settings.builtinSetting(type)
         val userExamples = if (userSetting.useCustom) filterByStyles(userSetting.examples, styles) else emptyList()

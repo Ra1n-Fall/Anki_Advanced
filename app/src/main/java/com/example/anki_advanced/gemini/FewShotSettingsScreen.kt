@@ -12,7 +12,6 @@ package com.example.anki_advanced.gemini
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -40,8 +39,6 @@ import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedTextField
@@ -353,7 +350,6 @@ fun FewShotEditScreen(
                 ExampleEditor(
                     index = exampleIndex,
                     example = example,
-                    styleOptions = uiState.styleOptions,
                     viewModel = viewModel
                 )
             }
@@ -425,7 +421,7 @@ private fun BuiltinHeader(
                 Text("내 예시 사용", fontWeight = FontWeight.Bold, fontSize = 18.sp, color = SetOnSurface)
                 Spacer(Modifier.height(6.dp))
                 Text(
-                    "켜면 기본 예시 대신 아래 예시를 사용해요. 고른 형태에 맞는 내 예시가 없으면 기본 예시로 대신해요.",
+                    "켜면 기본 예시 대신 아래 예시를 사용해요. 개념 맞히기·설명하기 같은 세부 형태는 예시가 아니라 덱 만들기 화면에서 유형별로 골라요.",
                     fontSize = 13.sp,
                     lineHeight = 19.sp,
                     color = SetOnSurfaceMuted
@@ -452,7 +448,6 @@ private fun BuiltinHeader(
 private fun ExampleEditor(
     index: Int,
     example: DraftExample,
-    styleOptions: List<CardStyle>,
     viewModel: FewShotEditViewModel
 ) {
     Column(
@@ -511,9 +506,7 @@ private fun ExampleEditor(
                 CardEditor(
                     cardIndex = cardIndex,
                     card = card,
-                    styleOptions = styleOptions,
                     onRemove = { viewModel.removeCard(index, cardIndex) },
-                    onStyleSelect = { viewModel.setStyle(index, cardIndex, it) },
                     onFrontChange = { viewModel.setFront(index, cardIndex, it) },
                     onBackChange = { viewModel.setBack(index, cardIndex, it) }
                 )
@@ -534,14 +527,12 @@ private fun ExampleEditor(
     }
 }
 
-// 예시 안의 카드 한 장: 연회색 블록 위에 (형태 칩) + 흰 앞면/뒷면 입력칸
+// 예시 안의 카드 한 장: 연회색 블록 위에 흰 앞면/뒷면 입력칸
 @Composable
 private fun CardEditor(
     cardIndex: Int,
     card: DraftCard,
-    styleOptions: List<CardStyle>,
     onRemove: () -> Unit,
-    onStyleSelect: (CardStyle) -> Unit,
     onFrontChange: (String) -> Unit,
     onBackChange: (String) -> Unit
 ) {
@@ -569,22 +560,6 @@ private fun CardEditor(
             modifier = Modifier.padding(end = 12.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            // 기본 유형이면 이 카드가 어떤 세부 형태인지 고른다. 덱 만들기에서 형태를
-            // 하나만 체크했을 때 그 형태의 카드만 예시로 보내기 위해 필요하다.
-            if (styleOptions.isNotEmpty()) {
-                Row(
-                    modifier = Modifier.horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    styleOptions.forEach { style ->
-                        StyleChip(
-                            label = style.label,
-                            selected = card.style == style,
-                            onClick = { onStyleSelect(style) }
-                        )
-                    }
-                }
-            }
             SoftTextField(
                 value = card.front,
                 onValueChange = onFrontChange,
@@ -688,24 +663,6 @@ private fun SoftTextField(
             focusedPlaceholderColor = SetOnSurfaceMuted.copy(alpha = 0.6f)
         ),
         modifier = Modifier.fillMaxWidth()
-    )
-}
-
-// 세부 형태 선택 칩: 선택되면 연보라 배경 + primary 글자, 아니면 흰 배경. 테두리 없음.
-@Composable
-private fun StyleChip(label: String, selected: Boolean, onClick: () -> Unit) {
-    FilterChip(
-        selected = selected,
-        onClick = onClick,
-        label = { Text(label, fontSize = 14.sp, fontWeight = FontWeight.Medium) },
-        shape = RoundedCornerShape(12.dp),
-        border = null,
-        colors = FilterChipDefaults.filterChipColors(
-            containerColor = SetSurface,
-            labelColor = SetOnSurface,
-            selectedContainerColor = SetPrimary.copy(alpha = 0.15f),
-            selectedLabelColor = SetPrimary
-        )
     )
 }
 
