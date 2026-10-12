@@ -77,8 +77,9 @@ class GeminiApiException(message: String, val retryable: Boolean = false) : Exce
 // 1단계(분류기, classifyCardType): 입력(텍스트/이미지)이 fact/code/formula/timeline 중
 //   어떤 콘텐츠 유형에 가까운지 Gemini에게 먼저 물어본다. 이 호출은 카드를 만들지 않고,
 //   오직 유형 하나만 판단해서 돌려준다.
-// 2단계(생성기, generateTypedCards): 1단계에서 판단된 유형 전용 few-shot 프롬프트(유형에
-//   맞는 예시 카드 하나를 프롬프트에 끼워 보여주는 것)로 실제 카드(front/back)를 생성한다.
+// 2단계(생성기, generateTypedCards): 1단계에서 판단된 유형 전용 few-shot 대화(유형에 맞는
+//   "자료 → 카드" 예시 5쌍을 user/model 턴으로 먼저 보여주는 것, FewShotExamples.kt)로
+//   실제 카드(front/back)를 생성한다.
 //
 // 왜 굳이 두 번 나눠서 부르는가: 하나의 프롬프트로 "아무거나 알아서 만들어줘"라고 하면
 // LLM이 뒤죽박죽 스타일로 카드를 섞어 만들 수 있는데, 먼저 유형을 확정한 뒤 그 유형에 맞는
@@ -163,14 +164,25 @@ class GeminiDeckGenerator {
         // executeGenerateContent가 돌려주는 raw는 이미 "{'type':'code'}" 같은 JSON 문자열이다
         // (Gemini 응답 안의 candidates[0].content.parts[0].text 자리에서 꺼낸 값).
         // optString("type", 기본값): 그 키가 없거나 형식이 이상해도 예외 없이 기본값(fact)으로 대체.
-        val raw = executeGenerateContent(apiKey, instruction, image, schema)
+        // 분류는 예시 없이(제로샷) 사용자 턴 하나만 보낸다.
+        val contents = JSONArray().put(userTurn(instruction, image))
+        val raw = executeGenerateContent(apiKey, contents, null, schema)
         val id = JSONObject(raw).optString("type", CardType.FACT.id)
         return CardType.fromId(id)
     }
 
-    // ── 2단계: 유형 전용 few-shot 프롬프트로 카드 생성 ──────────────────────
-    // 1단계에서 확정된 cardType에 맞는 지시문 + 예시(buildTypedPrompt)를 만들어 다시 한 번
-    // Gemini를 호출하고, 이번엔 응답으로 "카드 배열"을 받아 GeneratedCard 리스트로 바꾼다.
+    // ── 2단계: 유형 전용 few-shot 대화로 카드 생성 ─────────────────────────
+    // 1단계에서 확정된 cardType에 맞는 시스템 지시문(buildSystemInstruction)과 퓨샷 예시
+    // 대화(FewShotExamples)를 깔고 다시 한 번 Gemini를 호출한다. 응답으로 "카드 배열"을 받아
+    // GeneratedCard 리스트로 바꾼다.
+    //
+    // 요청의 contents는 이런 "대화 기록" 모양이 된다:
+    //   user : 예시1 자료로 만든 요청      model: 예시1 카드 JSON
+    //   user : 예시2 자료로 만든 요청      model: 예시2 카드 JSON
+    //   ... (유형별 5쌍)
+    //   user : 실제 사용자 자료로 만든 요청 (+ 이미지)   ← 모델은 여기에 답한다
+    // 예시 턴과 실제 요청 턴을 같은 함수(buildRequestText)로 만들어서 문장 형식이 완전히
+    // 똑같게 맞춘다 — 형식이 같아야 모델이 "아까와 같은 종류의 요청"이라고 인식한다.
     private fun generateTypedCards(
         apiKey: String,
         cardType: CardType,
@@ -179,7 +191,13 @@ class GeminiDeckGenerator {
         count: Int,
         language: String
     ): List<GeneratedCard> {
-        val prompt = buildTypedPrompt(cardType, content, image != null, count, language)
+        val contents = JSONArray()
+        FewShotExamples.forType(cardType).forEach { example ->
+            contents.put(userTurn(buildRequestText(example.source, hasImage = false, count = example.cards.size), null))
+            contents.put(modelTurn(cardsToJson(example.cards)))
+        }
+        contents.put(userTurn(buildRequestText(content, image != null, count), image))
+        val systemInstruction = buildSystemInstruction(cardType, language)
 
         // 이번엔 응답 스키마가 "배열": [{front, back}, {front, back}, ...] 형태를 강제한다.
         // front/back을 모두 "required"로 지정해서, Gemini가 둘 중 하나를 빼먹는 경우를 줄인다.
@@ -195,7 +213,7 @@ class GeminiDeckGenerator {
             })
         }
 
-        val raw = executeGenerateContent(apiKey, prompt, image, schema)
+        val raw = executeGenerateContent(apiKey, contents, systemInstruction, schema)
         val cardsArray = JSONArray(raw)
         val result = mutableListOf<GeneratedCard>()
         // [문법] for (i in 0 until cardsArray.length())
@@ -220,54 +238,91 @@ class GeminiDeckGenerator {
         return result
     }
 
-    // cardType에 따라 다른 지시문 + few-shot 예시 하나를 조합해서 최종 프롬프트 문자열을 만든다.
-    // (few-shot: "정답 예시를 하나 미리 보여주고 그 형식/스타일을 따라 하게 하는" 프롬프트 기법)
-    private fun buildTypedPrompt(
-        cardType: CardType,
-        content: String,
-        hasImage: Boolean,
-        count: Int,
-        language: String
-    ): String {
-        // 이미지 유무 / 텍스트 유무 조합에 따라 "무엇을 참고해서 만들라고 할지" 문구를 바꾼다.
-        // (이미지만 있고 텍스트가 없으면 "다음 내용을 바탕으로" 같은 어색한 문장이 안 나오게)
-        val source = when {
-            hasImage && content.isNotBlank() -> "아래 이미지와 보충 설명(\"$content\")을 참고해서"
-            hasImage -> "첨부된 이미지의 내용을 참고해서"
-            else -> "다음 내용(\"$content\")을 바탕으로"
+    // 시스템 지시문: 대화 턴과 별개로 "이 대화 전체에서 지켜야 할 규칙"을 담는 칸.
+    // 유형별 작성 지침, 언어, 길이 제한처럼 매 요청마다 바뀌지 않는 규칙은 여기에 두고,
+    // 대화 턴(user/model)에는 순수하게 "자료 → 카드" 예시와 실제 요청만 남긴다.
+    private fun buildSystemInstruction(cardType: CardType, language: String): String {
+        val guide = when (cardType) {
+            CardType.FACT -> "핵심 개념을 묻는 질문을 front에, 명확한 답변을 back에 담아. 정의뿐 아니라 이유, 비교, 사례를 묻는 질문도 섞어."
+            CardType.CODE -> "코드 스니펫이나 문법을 front에, 동작 설명이나 출력 결과를 back에 담아. 출력 예측, 빈칸 채우기, 버그 찾기, 개념 설명 등 형태를 섞어. 코드는 백틱(`)으로 감싸."
+            CardType.FORMULA -> "관계나 정의를 묻는 질문을 front에, 정확한 공식을 back에 담아. 공식 자체뿐 아니라 변수·단위의 의미나 간단한 대입 계산도 섞어."
+            CardType.TIMELINE -> "사건이나 시점을 묻는 질문을 front에, 정확한 시기/순서를 back에 담아. 연도뿐 아니라 선후 관계나 사건의 계기도 물어봐."
         }
-
-        // [문법] when (cardType) { ... } 각 분기가 "A to B" (Pair) 를 반환 → (guide, example)로 구조 분해
-        //   "A to B"는 Pair(A, B)를 만드는 코틀린의 짧은 표기법. when 식 전체의 결과가
-        //   Pair<String, String>이 되고, 그걸 val (guide, example) = ... 로 한 번에
-        //   두 변수(guide, example)로 풀어서 받는다. guide는 카드 작성 지침 문장,
-        //   example은 "이런 형식으로 만들어라"를 보여주는 실제 JSON 예시 문자열.
-        val (guide, example) = when (cardType) {
-            CardType.FACT -> "핵심 개념을 묻는 질문을 front에, 명확한 답변을 back에 담아." to
-                """[{"front":"광합성이 일어나는 세포 소기관은?","back":"엽록체"}]"""
-            CardType.CODE -> "코드 스니펫이나 문법을 front에, 동작 설명이나 출력 결과를 back에 담아." to
-                """[{"front":"파이썬 리스트 컴프리헨션 [x*2 for x in range(3)]의 결과는?","back":"[0, 2, 4]"}]"""
-            CardType.FORMULA -> "관계나 정의를 묻는 질문을 front에, 정확한 공식을 back에 담아." to
-                """[{"front":"피타고라스 정리에서 세 변의 관계는?","back":"a² + b² = c²"}]"""
-            CardType.TIMELINE -> "사건이나 시점을 묻는 질문을 front에, 정확한 시기/순서를 back에 담아." to
-                """[{"front":"세종대왕이 훈민정음을 반포한 연도는?","back":"1446년"}]"""
-        }
-
         // [문법] """ ... """.trimIndent()
         //   여러 줄 문자열(raw string) 안에서는 소스 코드의 들여쓰기가 그대로 문자열에
         //   포함되는데, trimIndent()가 각 줄의 공통 들여쓰기를 계산해서 잘라내
         //   "코드는 예쁘게 들여써도, 실제 프롬프트 문자열은 왼쪽 정렬된 깔끔한 텍스트"가 되게 한다.
         return """
-            $source 스페이스드 리피티션 학습용 플래시카드를 정확히 $count 장 만들어줘.
+            너는 스페이스드 리피티션 학습용 플래시카드를 만드는 도우미야.
             카드 유형: ${cardType.id}. $guide
-            모든 카드는 $language 로 작성하고, 중복 없이, 각 항목은 200자 이내로 간결하게 써.
-            아래는 형식 참고용 예시일 뿐이니 내용은 새로 만들어: $example
+            규칙:
+            - 모든 카드는 $language(으)로 작성해.
+            - 사용자가 요청한 장수를 정확히 지켜.
+            - 카드끼리 내용이 겹치지 않게 하고, front와 back은 각각 200자 이내로 간결하게 써.
+            - 앞선 대화의 예시는 형식과 스타일 참고용이야. 예시의 주제를 다시 카드로 만들지 말고, 마지막 요청의 자료로만 만들어.
         """.trimIndent()
     }
 
+    // user 턴의 요청 문장. 퓨샷 예시 턴과 실제 요청 턴이 모두 이 함수로 만들어진다.
+    // 자료는 따옴표로 문장 안에 끼워 넣지 않고 "내용:" 아래 별도 줄에 둔다 — 자료 안에
+    // 따옴표나 여러 줄 텍스트가 있어도 지시문과 자료의 경계가 흐려지지 않게.
+    private fun buildRequestText(content: String, hasImage: Boolean, count: Int): String {
+        // 이미지 유무 / 텍스트 유무 조합에 따라 "무엇을 참고해서 만들라고 할지" 문구를 바꾼다.
+        // (이미지만 있고 텍스트가 없으면 "아래 내용을 바탕으로" 같은 어색한 문장이 안 나오게)
+        val source = when {
+            hasImage && content.isNotBlank() -> "첨부된 이미지와 아래 보충 설명을 바탕으로"
+            hasImage -> "첨부된 이미지의 내용을 바탕으로"
+            else -> "아래 내용을 바탕으로"
+        }
+        return buildString {
+            append("$source 플래시카드를 정확히 ${count}장 만들어줘.")
+            if (content.isNotBlank()) {
+                append("\n\n내용:\n")
+                append(content)
+            }
+        }
+    }
+
+    // 예시 카드 목록을 model 턴에 넣을 JSON 문자열([{"front":...,"back":...}, ...])로 바꾼다.
+    // 실제 응답 스키마와 똑같은 모양이어야 모델이 그대로 따라 한다. JSONObject로 조립하면
+    // 따옴표/역슬래시 같은 특수문자 이스케이프를 알아서 처리해준다.
+    private fun cardsToJson(cards: List<Pair<String, String>>): String {
+        val array = JSONArray()
+        cards.forEach { (front, back) ->
+            array.put(JSONObject().put("front", front).put("back", back))
+        }
+        return array.toString()
+    }
+
+    // Gemini contents 배열에 들어갈 대화 턴 하나. role은 "user"(사람) 또는 "model"(AI).
+    // parts 배열: 하나의 턴 안에 텍스트와 이미지를 동시에 넣을 수 있다(멀티모달 입력).
+    // 텍스트 파트는 항상 넣고, 이미지가 있을 때만 두 번째 파트로 추가한다.
+    private fun userTurn(text: String, image: ImageInput?): JSONObject {
+        val parts = JSONArray().put(JSONObject().put("text", text))
+        if (image != null) {
+            // [문법] inlineData { mimeType, data }
+            //   이미지 원본 파일을 별도 URL로 올리는 게 아니라, 바이트 자체를 Base64
+            //   문자열로 인코딩해서 요청 JSON 안에 통째로 끼워 넣는 방식.
+            //   Base64.NO_WRAP: 인코딩 결과에 줄바꿈 문자를 넣지 않는 옵션. 줄바꿈이 섞이면
+            //   JSON 문자열 값 안에 실제 개행이 들어가 파싱이 깨질 수 있어서 반드시 필요하다.
+            parts.put(
+                JSONObject().put(
+                    "inlineData",
+                    JSONObject()
+                        .put("mimeType", image.mimeType)
+                        .put("data", Base64.encodeToString(image.bytes, Base64.NO_WRAP))
+                )
+            )
+        }
+        return JSONObject().put("role", "user").put("parts", parts)
+    }
+
+    private fun modelTurn(text: String): JSONObject =
+        JSONObject().put("role", "model").put("parts", JSONArray().put(JSONObject().put("text", text)))
+
     // ── Gemini 호출 공통 로직 ────────────────────────────────────────────────
-    // classifyCardType과 generateTypedCards 둘 다 "지시문 텍스트 + (선택)이미지 + 원하는
-    // 응답 스키마"만 다르고 나머지(HTTP 요청 조립, 전송, 에러 처리, 응답에서 text 뽑기)는
+    // classifyCardType과 generateTypedCards 둘 다 "대화 턴(contents) + (선택)시스템 지시문 +
+    // 원하는 응답 스키마"만 다르고 나머지(HTTP 요청 조립, 전송, 에러 처리, 응답에서 text 뽑기)는
     // 완전히 똑같아서, 그 공통 부분을 performRequest 함수 하나로 모아뒀다.
     //
     // executeGenerateContent 자신은 실제 요청을 보내지 않고, "실패하면 조건에 따라 다시
@@ -277,8 +332,8 @@ class GeminiDeckGenerator {
     // 지연 시간(5초 → 15초 → 45초)은 Google이 권장하는 지수 백오프 패턴을 따른 것.
     private fun executeGenerateContent(
         apiKey: String,
-        instructionText: String,
-        image: ImageInput?,
+        contents: JSONArray,
+        systemInstruction: String?,
         schema: JSONObject
     ): String {
         // [문법] RETRY_DELAYS_MS.forEachIndexed / for (delayMs in RETRY_DELAYS_MS)
@@ -288,7 +343,7 @@ class GeminiDeckGenerator {
         var lastException: GeminiApiException? = null
         for (attempt in 0..RETRY_DELAYS_MS.size) {
             try {
-                return performRequest(apiKey, instructionText, image, schema)
+                return performRequest(apiKey, contents, systemInstruction, schema)
             } catch (e: GeminiApiException) {
                 lastException = e
                 if (!e.retryable || attempt == RETRY_DELAYS_MS.size) throw e
@@ -304,36 +359,19 @@ class GeminiDeckGenerator {
     // (재시도 로직과 "진짜 네트워크 작업"을 함수로 분리해두면 각각이 하는 일이 더 분명해진다)
     private fun performRequest(
         apiKey: String,
-        instructionText: String,
-        image: ImageInput?,
+        contents: JSONArray,
+        systemInstruction: String?,
         schema: JSONObject
     ): String {
-        // Gemini의 "parts" 배열: 하나의 요청 안에 텍스트와 이미지를 동시에 넣을 수 있다
-        // (멀티모달 입력). 텍스트 파트는 항상 넣고, 이미지가 있을 때만 두 번째 파트로 추가한다.
-        val parts = JSONArray().put(JSONObject().apply { put("text", instructionText) })
-        if (image != null) {
-            // [문법] inlineData { mimeType, data }
-            //   이미지 원본 파일을 별도 URL로 올리는 게 아니라, 바이트 자체를 Base64
-            //   문자열로 인코딩해서 요청 JSON 안에 통째로 끼워 넣는 방식.
-            //   Base64.NO_WRAP: 인코딩 결과에 줄바꿈 문자를 넣지 않는 옵션. 줄바꿈이 섞이면
-            //   JSON 문자열 값 안에 실제 개행이 들어가 파싱이 깨질 수 있어서 반드시 필요하다.
-            parts.put(
-                JSONObject().apply {
-                    put(
-                        "inlineData",
-                        JSONObject().apply {
-                            put("mimeType", image.mimeType)
-                            put("data", Base64.encodeToString(image.bytes, Base64.NO_WRAP))
-                        }
-                    )
-                }
-            )
-        }
-
         // Gemini generateContent 요청의 최상위 구조:
-        // { "contents": [ { "parts": [...] } ], "generationConfig": { responseMimeType, responseSchema } }
+        // { "systemInstruction": { "parts": [...] },        ← 있을 때만
+        //   "contents": [ { "role": "user"|"model", "parts": [...] }, ... ],
+        //   "generationConfig": { responseMimeType, responseSchema } }
         val requestBody = JSONObject().apply {
-            put("contents", JSONArray().put(JSONObject().apply { put("parts", parts) }))
+            if (systemInstruction != null) {
+                put("systemInstruction", JSONObject().put("parts", JSONArray().put(JSONObject().put("text", systemInstruction))))
+            }
+            put("contents", contents)
             put(
                 "generationConfig",
                 JSONObject().apply {
