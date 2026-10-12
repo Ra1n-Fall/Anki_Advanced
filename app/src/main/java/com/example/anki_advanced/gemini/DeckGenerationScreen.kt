@@ -39,6 +39,7 @@ import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Photo
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
@@ -192,8 +193,10 @@ fun DeckGenerationScreen(
                     onContentChange = viewModel::onContentChange,
                     onCardCountChange = viewModel::onCardCountChange,
                     onLanguageChange = viewModel::onLanguageChange,
-                    onCardTypeSelect = viewModel::onCardTypeSelect,
+                    onTypeChoiceSelect = viewModel::onTypeChoiceSelect,
                     onStyleToggle = viewModel::onStyleToggle,
+                    // "예시 설정" 버튼: 퓨샷 예시 설정 화면으로 이동 (HomeActivity의 "fewShotSettings" 경로).
+                    onOpenFewShotSettings = { navController?.navigate("fewShotSettings") },
                     onGenerateClick = viewModel::onGenerateClick,
                     onChangeApiKey = viewModel::clearApiKey,
                     onImageRemove = viewModel::onImageRemoved,
@@ -299,8 +302,9 @@ private fun GenerationForm(
     onContentChange: (String) -> Unit,
     onCardCountChange: (Int) -> Unit,
     onLanguageChange: (String) -> Unit,
-    onCardTypeSelect: (CardType?) -> Unit,
+    onTypeChoiceSelect: (TypeChoice) -> Unit,
     onStyleToggle: (CardStyle) -> Unit,
+    onOpenFewShotSettings: () -> Unit,
     onGenerateClick: () -> Unit,
     onChangeApiKey: () -> Unit,
     onImageRemove: () -> Unit,
@@ -420,10 +424,12 @@ private fun GenerationForm(
         }
 
         CardTypeSelector(
-            selectedType = uiState.selectedCardType,
+            choice = uiState.typeChoice,
             selectedStyles = uiState.selectedStyles,
-            onTypeSelect = onCardTypeSelect,
-            onStyleToggle = onStyleToggle
+            fewShotSettings = uiState.fewShotSettings,
+            onChoiceSelect = onTypeChoiceSelect,
+            onStyleToggle = onStyleToggle,
+            onOpenFewShotSettings = onOpenFewShotSettings
         )
 
         Button(
@@ -453,31 +459,51 @@ private fun GenerationForm(
 // "자동"이면 Gemini가 내용을 보고 유형을 정하고 그 유형의 두 형태를 섞어서 만든다.
 // 유형을 직접 고르면 그 유형의 세부 형태 체크박스 2개가 나타나고, 체크한 형태로만 만든다.
 //
+// 사용자 지정 유형을 고르면 체크박스 대신 그 유형의 작성 지침과 예시 개수를 보여준다.
+// 오른쪽 위 "예시 설정" 버튼으로 퓨샷 예시 설정 화면(FewShotSettingsScreen)에 바로 갈 수 있다.
+//
 // [문법] Row(Modifier.horizontalScroll(rememberScrollState()))
-//   칩 5개가 좁은 화면 폭을 넘칠 수 있어서, 넘치면 옆으로 밀어서 볼 수 있게 가로 스크롤을 건다.
+//   칩이 좁은 화면 폭을 넘칠 수 있어서(사용자 지정 유형이 늘어나면 더더욱), 넘치면 옆으로
+//   밀어서 볼 수 있게 가로 스크롤을 건다.
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun CardTypeSelector(
-    selectedType: CardType?,
+    choice: TypeChoice,
     selectedStyles: Set<CardStyle>,
-    onTypeSelect: (CardType?) -> Unit,
-    onStyleToggle: (CardStyle) -> Unit
+    fewShotSettings: FewShotSettings,
+    onChoiceSelect: (TypeChoice) -> Unit,
+    onStyleToggle: (CardStyle) -> Unit,
+    onOpenFewShotSettings: () -> Unit
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text("카드 유형", fontWeight = FontWeight.SemiBold, fontSize = 14.sp, color = GenOnSurface)
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text("카드 유형", fontWeight = FontWeight.SemiBold, fontSize = 14.sp, color = GenOnSurface)
+            TextButton(onClick = onOpenFewShotSettings) {
+                Icon(Icons.Filled.Tune, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(Modifier.width(4.dp))
+                Text("예시 설정", fontSize = 12.sp)
+            }
+        }
         Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .horizontalScroll(rememberScrollState()),
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            // [문법] listOf<CardType?>(null) + CardType.entries
-            //   맨 앞에 "자동"을 뜻하는 null을 하나 붙여서, 칩 5개를 같은 반복문으로 그린다.
-            (listOf<CardType?>(null) + CardType.entries).forEach { type ->
+            // 칩 순서: 자동 → 기본 유형 4개 → 사용자 지정 유형들.
+            // [문법] Pair(선택값, 라벨)의 리스트를 만들어 같은 반복문으로 그린다.
+            val chips = listOf<Pair<TypeChoice, String>>(TypeChoice.Auto to "자동") +
+                CardType.entries.map { TypeChoice.Builtin(it) to it.label } +
+                fewShotSettings.customTypes.map { TypeChoice.Custom(it.id) to it.name }
+            chips.forEach { (chipChoice, label) ->
                 FilterChip(
-                    selected = selectedType == type,
-                    onClick = { onTypeSelect(type) },
-                    label = { Text(type?.label ?: "자동") },
+                    selected = choice == chipChoice,
+                    onClick = { onChoiceSelect(chipChoice) },
+                    label = { Text(label) },
                     colors = FilterChipDefaults.filterChipColors(
                         selectedContainerColor = GenPrimary.copy(alpha = 0.12f),
                         selectedLabelColor = GenPrimary
@@ -486,42 +512,84 @@ private fun CardTypeSelector(
             }
         }
 
-        if (selectedType == null) {
-            Text(
+        when (choice) {
+            TypeChoice.Auto -> Text(
                 "AI가 내용을 보고 유형을 정한 뒤, 그 유형의 여러 형태를 섞어서 만들어요.",
                 fontSize = 12.sp,
                 color = GenOnSurfaceMuted
             )
-        } else {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(14.dp))
-                    .background(GenSurfaceLow)
-                    .padding(vertical = 4.dp)
-            ) {
-                CardStyle.forType(selectedType).forEach { style ->
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable { onStyleToggle(style) }  // 행 전체를 탭해도 토글
-                            .padding(horizontal = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Checkbox(checked = style in selectedStyles, onCheckedChange = { onStyleToggle(style) })
-                        Column {
-                            Text(style.label, fontWeight = FontWeight.Medium, fontSize = 14.sp, color = GenOnSurface)
-                            Text(style.description, fontSize = 12.sp, color = GenOnSurfaceMuted)
-                        }
+            is TypeChoice.Builtin -> BuiltinStyleOptions(
+                type = choice.type,
+                selectedStyles = selectedStyles,
+                setting = fewShotSettings.builtinSetting(choice.type),
+                onStyleToggle = onStyleToggle
+            )
+            is TypeChoice.Custom -> fewShotSettings.customType(choice.id)?.let { type ->
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(GenSurfaceLow)
+                        .padding(14.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Text(
+                        type.instruction.ifBlank { "작성 지침 없음 — 핵심 내용을 묻는 질문/답 카드로 만들어요." },
+                        fontSize = 13.sp,
+                        color = GenOnSurface
+                    )
+                    Text(
+                        if (type.examples.isEmpty()) "예시 없음 (지침만으로 생성)" else "내 예시 ${type.examples.size}개 사용",
+                        fontSize = 12.sp,
+                        color = GenOnSurfaceMuted
+                    )
+                }
+            }
+        }
+    }
+}
+
+// 기본 유형을 골랐을 때 나오는 세부 형태 체크박스 + 지금 어떤 예시를 쓰는지 안내 문구.
+@Composable
+private fun BuiltinStyleOptions(
+    type: CardType,
+    selectedStyles: Set<CardStyle>,
+    setting: BuiltinFewShotSetting,
+    onStyleToggle: (CardStyle) -> Unit
+) {
+    // 내 예시가 켜져 있어도 고른 형태에 맞는 예시가 없으면 생성 시 기본 예시로 대신한다
+    // (GeminiDeckGenerator.builtinPlan) — 여기 문구는 "켜져 있고 예시가 있는지"까지만 보여준다.
+    val usingCustom = setting.useCustom && setting.examples.isNotEmpty()
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(14.dp))
+                .background(GenSurfaceLow)
+                .padding(vertical = 4.dp)
+        ) {
+            CardStyle.forType(type).forEach { style ->
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { onStyleToggle(style) }  // 행 전체를 탭해도 토글
+                        .padding(horizontal = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Checkbox(checked = style in selectedStyles, onCheckedChange = { onStyleToggle(style) })
+                    Column {
+                        Text(style.label, fontWeight = FontWeight.Medium, fontSize = 14.sp, color = GenOnSurface)
+                        Text(style.description, fontSize = 12.sp, color = GenOnSurfaceMuted)
                     }
                 }
             }
-            Text(
-                "둘 다 체크하면 섞어서 만들어요. 최소 하나는 체크돼 있어야 해요.",
-                fontSize = 12.sp,
-                color = GenOnSurfaceMuted
-            )
         }
+        Text(
+            "둘 다 체크하면 섞어서 만들어요. 최소 하나는 체크돼 있어야 해요.\n" +
+                if (usingCustom) "내 예시 ${setting.examples.size}개를 사용해요." else "기본 예시를 사용해요.",
+            fontSize = 12.sp,
+            color = GenOnSurfaceMuted
+        )
     }
 }
 
@@ -551,8 +619,8 @@ private fun PreviewSection(
                 modifier = Modifier.weight(1f)  // 남는 공간을 다 차지해서 오른쪽 뱃지를 끝으로 밀어냄
             )
             // Gemini가 1단계에서 판단한 콘텐츠 유형을 작은 알약(pill) 모양 뱃지로 보여준다.
-            // detectedCardType이 null이면(아직 생성 전이면) 아예 그려지지 않는다.
-            uiState.detectedCardType?.let { type ->
+            // resultTypeLabel이 null이면(아직 생성 전이면) 아예 그려지지 않는다.
+            uiState.resultTypeLabel?.let { label ->
                 Box(
                     modifier = Modifier
                         .clip(RoundedCornerShape(50))
@@ -561,7 +629,7 @@ private fun PreviewSection(
                 ) {
                     // 사용자가 유형을 직접 골랐으면 "감지"가 아니므로 문구를 구분한다.
                     Text(
-                        (if (uiState.selectedCardType != null) "유형: " else "감지된 유형: ") + type.label,
+                        (if (uiState.resultWasAutoDetected) "감지된 유형: " else "유형: ") + label,
                         fontSize = 11.sp,
                         fontWeight = FontWeight.SemiBold,
                         color = GenPrimary

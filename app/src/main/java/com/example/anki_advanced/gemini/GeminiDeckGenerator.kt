@@ -106,11 +106,39 @@ data class GeneratedCard(
     val cardType: String
 )
 
-// 생성 요청 한 번의 최종 결과물. "무슨 유형으로 판단했는지"와 "그래서 만들어진 카드들"을
-// 한 덩어리로 묶어서, ViewModel이 감지된 유형을 화면에 뱃지로 보여줄 수 있게 한다.
+// 생성 요청 한 번의 최종 결과물. "무슨 유형으로 만들었는지(typeLabel, 예: "코드" 또는
+// 사용자 지정 유형 이름)"와 "그래서 만들어진 카드들"을 한 덩어리로 묶어서, ViewModel이
+// 유형을 화면에 뱃지로 보여줄 수 있게 한다.
 data class GenerationResult(
-    val cardType: CardType,
+    val typeLabel: String,
     val cards: List<GeneratedCard>
+)
+
+// 덱 만들기 화면에서 사용자가 고른 "무엇으로 만들지".
+// [문법] sealed interface
+//   이 파일 안에 정의된 세 가지 경우(Auto/Builtin/Custom)만 존재할 수 있다고 컴파일러에게
+//   알려주는 타입. when(target)에서 세 경우를 다 처리하면 else가 필요 없고, 경우를 빠뜨리면
+//   컴파일 에러가 나서 실수를 막아준다.
+sealed interface GenerationTarget {
+    // 자동: Gemini가 내용을 보고 기본 유형 중 하나로 분류한 뒤, 그 유형의 형태를 전부 섞는다.
+    data object Auto : GenerationTarget
+    // 기본 유형 직접 선택: 체크한 세부 형태(styles)로만 만든다. 분류 호출은 생략.
+    data class Builtin(val type: CardType, val styles: Set<CardStyle>) : GenerationTarget
+    // 사용자 지정 유형: 그 유형의 작성 지침과 예시로 만든다.
+    data class Custom(val type: CustomCardType) : GenerationTarget
+}
+
+// 실제 생성 호출에 필요한 것들을 다 정해둔 "계획". 기본 유형이든 사용자 지정 유형이든
+// 여기까지 오면 똑같은 모양이라, 2단계 생성 로직은 둘을 구분할 필요가 없다.
+//   storageId: 카드의 cardType 컬럼에 저장될 값 ("code" 또는 "custom:ab12cd34")
+//   label: 화면 뱃지에 보여줄 이름, typeName: 시스템 지시문의 "카드 유형:" 뒤에 들어갈 이름
+//   guide: 작성 지침, examples: 이미 세부 형태 필터까지 끝난 퓨샷 예시
+private data class PromptPlan(
+    val storageId: String,
+    val label: String,
+    val typeName: String,
+    val guide: String,
+    val examples: List<FewShotExample>
 )
 
 // 네트워크 실패나 Gemini 응답 이상 등, 사용자에게 그대로 보여줘도 되는 실패 이유를 담는 예외.
@@ -157,9 +185,10 @@ class GeminiDeckGenerator {
     // 이 클래스의 유일한 공개(public) 진입점. ViewModel은 이 함수 하나만 호출하면 되고,
     // 내부적으로 분류 → 생성 두 번의 네트워크 호출이 일어난다는 사실은 몰라도 된다.
     //
-    // cardType: 사용자가 화면에서 유형을 직접 골랐으면 그 값, "자동"이면 null.
-    //   직접 골랐으면 1단계 분류 호출을 건너뛰어 API 호출이 1번으로 줄어든다.
-    // styles: 사용자가 체크한 세부 형태. 비어 있으면(자동 모드 등) 그 유형의 형태를 전부 섞는다.
+    // target: 자동 / 기본 유형 직접 선택 / 사용자 지정 유형 중 무엇으로 만들지.
+    //   자동일 때만 1단계 분류 호출을 하고, 직접 골랐으면 API 호출이 1번으로 줄어든다.
+    // fewShotSettings: 사용자가 설정 화면에서 만든 예시. 기본 유형의 "내 예시 사용"이 켜져
+    //   있으면 내장 예시 대신 이걸 쓴다.
     //
     // [문법] suspend fun ... = withContext(Dispatchers.IO) { ... }
     //   suspend: 코루틴 안에서만 호출 가능하다는 표시 (ViewModel의 viewModelScope.launch { } 안에서 호출됨).
@@ -173,16 +202,61 @@ class GeminiDeckGenerator {
         image: ImageInput?,
         count: Int,
         language: String,
-        cardType: CardType? = null,
-        styles: Set<CardStyle> = emptySet()
+        target: GenerationTarget,
+        fewShotSettings: FewShotSettings
     ): GenerationResult = withContext(Dispatchers.IO) {
-        val resolvedType = cardType ?: classifyCardType(apiKey, content, image)
-        // 다른 유형의 형태가 섞여 들어오는 경우까지 걸러내고, 남는 게 없으면 그 유형 전체로.
-        val resolvedStyles = styles.filter { it.cardType == resolvedType }
-            .ifEmpty { CardStyle.forType(resolvedType) }
-        val cards = generateTypedCards(apiKey, resolvedType, resolvedStyles, content, image, count, language)
-        GenerationResult(resolvedType, cards)
+        val plan = when (target) {
+            GenerationTarget.Auto -> {
+                val type = classifyCardType(apiKey, content, image)
+                builtinPlan(type, CardStyle.forType(type), fewShotSettings)
+            }
+            is GenerationTarget.Builtin -> {
+                // 다른 유형의 형태가 섞여 들어오는 경우까지 걸러내고, 남는 게 없으면 그 유형 전체로.
+                val styles = target.styles.filter { it.cardType == target.type }
+                    .ifEmpty { CardStyle.forType(target.type) }
+                builtinPlan(target.type, styles, fewShotSettings)
+            }
+            is GenerationTarget.Custom -> customPlan(target.type)
+        }
+        val cards = generateTypedCards(apiKey, plan, content, image, count, language)
+        GenerationResult(plan.label, cards)
     }
+
+    // 기본 유형의 생성 계획. 예시는 "내 예시 사용"이 켜져 있으면 사용자 예시를, 아니면 내장
+    // 예시를 쓰고, 어느 쪽이든 고른 세부 형태의 카드만 남긴다. 사용자 예시가 켜져 있어도
+    // 고른 형태에 맞는 예시가 하나도 없으면(예: "연도" 카드만 만들어 뒀는데 "사건 순서"를 고름)
+    // 내장 예시로 대신한다 — 예시가 아예 없는 것보다는 형태가 맞는 예시가 있는 편이 낫다.
+    private fun builtinPlan(type: CardType, styles: List<CardStyle>, settings: FewShotSettings): PromptPlan {
+        val userSetting = settings.builtinSetting(type)
+        val userExamples = if (userSetting.useCustom) filterByStyles(userSetting.examples, styles) else emptyList()
+        val examples = userExamples.ifEmpty { filterByStyles(FewShotExamples.forType(type), styles) }
+
+        // 고른 형태가 하나면 그 형태만, 여러 개면 "섞어서" 만들라고 지시한다.
+        val guide = if (styles.size == 1) {
+            "카드 형태: ${styles[0].label} — ${styles[0].instruction} 모든 카드를 이 형태로만 만들어."
+        } else {
+            buildString {
+                append("아래 카드 형태들을 비슷한 비율로 섞어서 만들어.")
+                styles.forEach { append("\n  · ${it.label}: ${it.instruction}") }
+            }
+        }
+        return PromptPlan(type.id, type.label, type.id, guide, examples)
+    }
+
+    // 사용자 지정 유형의 생성 계획. 작성 지침을 비워뒀으면 무난한 기본 지침을 쓰고,
+    // 예시가 하나도 없으면 예시 없이(제로샷) 지침만으로 생성한다.
+    private fun customPlan(type: CustomCardType): PromptPlan {
+        val guide = type.instruction.trim().ifBlank { "자료의 핵심 내용을 묻는 질문을 front에, 명확한 답을 back에 담아." }
+        return PromptPlan(type.storageId, type.name, type.name, "작성 지침: $guide", type.examples)
+    }
+
+    // 예시 카드 중 고른 형태(styles)의 카드만 남기고, 카드가 하나도 안 남은 예시는 통째로 뺀다.
+    // style이 없는(null) 카드는 형태 구분이 없는 것으로 보고 항상 남긴다.
+    private fun filterByStyles(examples: List<FewShotExample>, styles: List<CardStyle>): List<FewShotExample> =
+        examples.mapNotNull { example ->
+            val cards = example.cards.filter { it.style == null || it.style in styles }
+            if (cards.isEmpty()) null else example.copy(cards = cards)
+        }
 
     // ── 1단계: 콘텐츠 유형 분류 ──────────────────────────────────────────────
     // Gemini에게 "이 내용을 fact/code/formula/timeline 중 뭘로 보는 게 좋겠냐"만 물어보고,
@@ -245,27 +319,24 @@ class GeminiDeckGenerator {
     // 예시 턴과 실제 요청 턴을 같은 함수(buildRequestText)로 만들어서 문장 형식이 완전히
     // 똑같게 맞춘다 — 형식이 같아야 모델이 "아까와 같은 종류의 요청"이라고 인식한다.
     //
-    // 예시 카드마다 세부 형태(style)가 붙어 있어서, 사용자가 고른 형태의 카드만 남긴 예시를
-    // 보여준다. (예: "연도"만 골랐으면 예시에서도 "사건 순서" 카드는 빠진다 — 예시에 안 고른
-    // 형태가 섞여 있으면 모델이 그것까지 따라 만들기 때문)
+    // plan.examples는 이미 세부 형태 필터가 끝난 상태다(builtinPlan 참고). 예: "연도"만 골랐으면
+    // 예시에서도 "사건 순서" 카드는 빠져 있다 — 예시에 안 고른 형태가 섞여 있으면 모델이
+    // 그것까지 따라 만들기 때문.
     private fun generateTypedCards(
         apiKey: String,
-        cardType: CardType,
-        styles: List<CardStyle>,
+        plan: PromptPlan,
         content: String,
         image: ImageInput?,
         count: Int,
         language: String
     ): List<GeneratedCard> {
         val contents = JSONArray()
-        FewShotExamples.forType(cardType).forEach { example ->
-            val cards = example.cards.filter { it.style in styles }
-            if (cards.isEmpty()) return@forEach
-            contents.put(userTurn(buildRequestText(example.source, hasImage = false, count = cards.size), null))
-            contents.put(modelTurn(cardsToJson(cards)))
+        plan.examples.forEach { example ->
+            contents.put(userTurn(buildRequestText(example.source, hasImage = false, count = example.cards.size), null))
+            contents.put(modelTurn(cardsToJson(example.cards)))
         }
         contents.put(userTurn(buildRequestText(content, image != null, count), image))
-        val systemInstruction = buildSystemInstruction(cardType, styles, language)
+        val systemInstruction = buildSystemInstruction(plan, language)
 
         // 이번엔 응답 스키마가 "배열": [{front, back}, {front, back}, ...] 형태를 강제한다.
         // front/back을 모두 "required"로 지정해서, Gemini가 둘 중 하나를 빼먹는 경우를 줄인다.
@@ -296,7 +367,7 @@ class GeminiDeckGenerator {
             // front/back 중 하나라도 실제로 비어 있으면 그 카드는 그냥 버리고 넘어간다
             // (빈 카드가 덱에 섞여 들어가는 것보다는 장수가 조금 줄어드는 게 낫다는 판단).
             if (front.isNotEmpty() && back.isNotEmpty()) {
-                result.add(GeneratedCard(front, back, cardType.id))
+                result.add(GeneratedCard(front, back, plan.storageId))
             }
         }
 
@@ -309,22 +380,13 @@ class GeminiDeckGenerator {
     // 시스템 지시문: 대화 턴과 별개로 "이 대화 전체에서 지켜야 할 규칙"을 담는 칸.
     // 유형별 작성 지침, 언어, 길이 제한처럼 매 요청마다 바뀌지 않는 규칙은 여기에 두고,
     // 대화 턴(user/model)에는 순수하게 "자료 → 카드" 예시와 실제 요청만 남긴다.
-    private fun buildSystemInstruction(cardType: CardType, styles: List<CardStyle>, language: String): String {
-        // 고른 형태가 하나면 그 형태만, 여러 개면 "섞어서" 만들라고 지시한다.
-        val guide = if (styles.size == 1) {
-            "카드 형태: ${styles[0].label} — ${styles[0].instruction} 모든 카드를 이 형태로만 만들어."
-        } else {
-            buildString {
-                append("아래 카드 형태들을 비슷한 비율로 섞어서 만들어.")
-                styles.forEach { append("\n  · ${it.label}: ${it.instruction}") }
-            }
-        }
+    private fun buildSystemInstruction(plan: PromptPlan, language: String): String {
         // guide가 여러 줄일 수 있어서 """...""".trimIndent()를 쓰지 않는다 — 끼워 넣은 줄의
         // 들여쓰기가 공통 들여쓰기 계산을 망가뜨리기 때문. 대신 줄 목록을 "\n"으로 이어 붙인다.
         return listOf(
             "너는 스페이스드 리피티션 학습용 플래시카드를 만드는 도우미야.",
-            "카드 유형: ${cardType.id}.",
-            guide,
+            "카드 유형: ${plan.typeName}.",
+            plan.guide,
             "규칙:",
             "- 모든 카드는 $language(으)로 작성해.",
             "- 사용자가 요청한 장수를 정확히 지켜.",

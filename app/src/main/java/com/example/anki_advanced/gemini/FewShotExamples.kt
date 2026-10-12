@@ -13,10 +13,14 @@ package com.example.anki_advanced.gemini
 // 예시를 고를 때 신경 쓴 점:
 //   - 유형마다 주제(분야)를 서로 다르게 섞어서, 모델이 특정 분야에 끌려가지 않게 한다.
 //   - 장수도 2~3장으로 섞어서, "요청한 장수를 정확히 지킨다"는 패턴을 보여준다.
+//
+// 사용자가 설정 화면에서 직접 만든 예시(FewShotStore)도 같은 클래스를 쓴다.
+// style은 기본 유형의 예시에서만 의미가 있고, 사용자 지정 유형의 예시 카드는 null이다
+// (사용자 지정 유형에는 세부 형태 구분이 없으므로).
 data class ExampleCard(
     val front: String,
     val back: String,
-    val style: CardStyle
+    val style: CardStyle?
 )
 
 data class FewShotExample(

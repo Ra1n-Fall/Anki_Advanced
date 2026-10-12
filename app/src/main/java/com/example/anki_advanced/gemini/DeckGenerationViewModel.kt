@@ -38,6 +38,15 @@ data class GeneratedCardUi(
 //   - deckName: 그냥 이름표. 비워둬도 생성엔 지장이 없고, 생성 후 content에서 자동으로
 //     제목을 뽑아 채워준다(아래 deriveDeckTitle 참고). 그래서 "제목만 있고 내용이 없는"
 //     상태는 막지만, "내용만 있고 제목이 없는" 상태는 허용해도 된다.
+// 덱 만들기 화면의 "카드 유형" 칩 중 무엇이 선택돼 있는지.
+// 사용자 지정 유형은 객체 대신 id만 들고 있다 — 설정 화면에서 이름이나 예시를 고쳐도
+// 생성 시점에 FewShotStore에서 최신 내용을 다시 찾아 쓰게 하기 위함.
+sealed interface TypeChoice {
+    data object Auto : TypeChoice
+    data class Builtin(val type: CardType) : TypeChoice
+    data class Custom(val id: String) : TypeChoice
+}
+
 data class DeckGenerationUiState(
     val hasApiKey: Boolean = false,        // API 키가 등록돼 있는지 (없으면 등록 화면부터 보여줌)
     val apiKeyInput: String = "",          // API 키 등록 입력창에 지금 타이핑 중인 값
@@ -45,7 +54,9 @@ data class DeckGenerationUiState(
     val content: String = "",              // 카드로 만들 내용/텍스트 (필수)
     val cardCount: Int = 10,               // 몇 장 만들지
     val language: String = "한국어",         // 카드를 어떤 언어로 작성할지
-    val selectedCardType: CardType? = null, // 사용자가 고른 카드 유형 (null = 자동, Gemini가 분류)
+    val typeChoice: TypeChoice = TypeChoice.Auto, // 사용자가 고른 카드 유형 칩 (기본: 자동)
+    // 퓨샷 예시 설정 화면에서 저장한 내용. 사용자 지정 유형 칩 목록과 "내 예시 사용 중" 표시에 쓴다.
+    val fewShotSettings: FewShotSettings = FewShotSettings(),
     // 세부 형태 체크 상태. 유형마다 따로 기억하도록 전체 유형의 형태를 한 Set에 담아둔다
     // (예: 코드에서 "코드 작성"만 체크해두고 연표로 갔다가 돌아와도 체크 상태가 유지된다).
     // 기본값은 전부 체크 = 두 형태를 섞어서 생성.
@@ -53,7 +64,8 @@ data class DeckGenerationUiState(
     val imagePreview: Bitmap? = null,      // 첨부된 이미지 미리보기 (없으면 null)
     val isLoading: Boolean = false,        // Gemini 호출 진행 중인지 (버튼 로딩 스피너용)
     val errorMessage: String? = null,      // 화면에 보여줄 에러 문구 (없으면 null)
-    val detectedCardType: CardType? = null, // 생성 직후 Gemini가 분류한 콘텐츠 유형 (뱃지 표시용)
+    val resultTypeLabel: String? = null,   // 생성된 카드의 유형 이름 (뱃지 표시용, 생성 전엔 null)
+    val resultWasAutoDetected: Boolean = false, // 그 유형이 자동 분류로 정해졌는지 ("감지된 유형" 문구용)
     val generatedCards: List<GeneratedCardUi> = emptyList(), // 미리보기 목록
     val isSaving: Boolean = false,         // DB 저장 진행 중인지
     val saveCompleted: Boolean = false     // 저장이 끝났는지 (true가 되면 화면이 자동으로 닫힘)
@@ -78,6 +90,8 @@ class DeckGenerationViewModel(application: Application) : AndroidViewModel(appli
     private val apiKeyStore = GeminiApiKeyStore(application)
     // 실제 Gemini 네트워크 호출을 담당하는 클래스 (2단계 프롬프트 로직이 여기 안에 있음).
     private val generator = GeminiDeckGenerator()
+    // 사용자가 설정 화면에서 만든 퓨샷 예시 / 사용자 지정 유형 저장소 (앱 전체 싱글턴).
+    private val fewShotStore = FewShotStore.getInstance(application)
 
     // 첨부한 이미지의 "전송용 압축 바이트"는 uiState(StateFlow)에 직접 넣지 않고 따로 보관한다.
     // 이유: StateFlow는 값이 바뀔 때마다 구독자(Compose 화면)에게 새 값을 통째로 흘려보내는데,
@@ -95,6 +109,23 @@ class DeckGenerationViewModel(application: Application) : AndroidViewModel(appli
         DeckGenerationUiState(hasApiKey = apiKeyStore.getApiKey() != null)
     )
     val uiState: StateFlow<DeckGenerationUiState> = _uiState.asStateFlow()
+
+    init {
+        // 설정 화면에서 예시나 사용자 지정 유형을 바꾸면 이 화면에도 바로 반영되도록 계속 구독한다.
+        // 선택해둔 사용자 지정 유형이 설정 화면에서 삭제됐으면 "자동"으로 되돌린다.
+        viewModelScope.launch {
+            fewShotStore.settings.collect { settings ->
+                _uiState.update { state ->
+                    val choice = state.typeChoice
+                    val stillExists = choice !is TypeChoice.Custom || settings.customType(choice.id) != null
+                    state.copy(
+                        fewShotSettings = settings,
+                        typeChoice = if (stillExists) choice else TypeChoice.Auto
+                    )
+                }
+            }
+        }
+    }
 
     fun onApiKeyInputChange(value: String) {
         _uiState.update { it.copy(apiKeyInput = value) }
@@ -134,9 +165,9 @@ class DeckGenerationViewModel(application: Application) : AndroidViewModel(appli
         _uiState.update { it.copy(deckName = value) }
     }
 
-    // 유형 칩 선택. null은 "자동"(Gemini가 내용을 보고 유형을 판단).
-    fun onCardTypeSelect(type: CardType?) {
-        _uiState.update { it.copy(selectedCardType = type) }
+    // 유형 칩 선택 (자동 / 기본 유형 / 사용자 지정 유형).
+    fun onTypeChoiceSelect(choice: TypeChoice) {
+        _uiState.update { it.copy(typeChoice = choice) }
     }
 
     // 세부 형태 체크박스 토글. 같은 유형 안에서 마지막 하나는 해제할 수 없게 막는다 —
@@ -215,7 +246,21 @@ class DeckGenerationViewModel(application: Application) : AndroidViewModel(appli
         // 로딩 상태로 전환 + 이전 생성 결과/에러/유형 뱃지를 전부 초기화.
         // (재생성 버튼을 눌렀을 때 이전 결과가 잠깐이라도 남아 보이면 헷갈리므로 바로 비운다)
         _uiState.update {
-            it.copy(isLoading = true, errorMessage = null, generatedCards = emptyList(), detectedCardType = null)
+            it.copy(isLoading = true, errorMessage = null, generatedCards = emptyList(), resultTypeLabel = null)
+        }
+
+        // 화면의 선택(TypeChoice)을 생성기가 이해하는 형태(GenerationTarget)로 바꾼다.
+        // 기본 유형이면 그 유형의 체크된 형태만 넘기고(분류 호출도 생략됨), 사용자 지정 유형이면
+        // 저장소에서 최신 내용을 찾아 넘긴다.
+        val settings = fewShotStore.settings.value
+        val target = when (val choice = state.typeChoice) {
+            TypeChoice.Auto -> GenerationTarget.Auto
+            is TypeChoice.Builtin -> GenerationTarget.Builtin(
+                choice.type,
+                state.selectedStyles.filter { it.cardType == choice.type }.toSet()
+            )
+            is TypeChoice.Custom -> settings.customType(choice.id)?.let { GenerationTarget.Custom(it) }
+                ?: GenerationTarget.Auto
         }
 
         viewModelScope.launch {
@@ -226,23 +271,20 @@ class DeckGenerationViewModel(application: Application) : AndroidViewModel(appli
                     image = image,
                     count = state.cardCount,
                     language = state.language,
-                    // 유형을 직접 골랐으면 그 유형의 체크된 형태만 넘기고(분류 호출도 생략됨),
-                    // 자동이면 null + 빈 Set → 분류된 유형의 형태를 전부 섞어서 생성.
-                    cardType = state.selectedCardType,
-                    styles = state.selectedCardType
-                        ?.let { type -> state.selectedStyles.filter { it.cardType == type }.toSet() }
-                        .orEmpty()
+                    target = target,
+                    fewShotSettings = settings
                 )
                 _uiState.update { current ->
                     current.copy(
                         isLoading = false,
-                        detectedCardType = result.cardType,
+                        resultTypeLabel = result.typeLabel,
+                        resultWasAutoDetected = target == GenerationTarget.Auto,
                         generatedCards = result.cards.map { GeneratedCardUi(it.front, it.back, it.cardType) },
                         // [문법] current.deckName.ifBlank { ... }
                         //   deckName이 비어있지 않으면(사용자가 이미 제목을 입력해뒀으면) 그 값을
                         //   그대로 유지하고, 비어있을 때만 뒤 블록(자동 제목 생성)을 실행해서 채운다.
                         //   즉 "사용자가 이미 적어둔 제목은 절대 덮어쓰지 않는다"는 보장이 이 한 줄에 있다.
-                        deckName = current.deckName.ifBlank { deriveDeckTitle(state.content, result.cardType.label) }
+                        deckName = current.deckName.ifBlank { deriveDeckTitle(state.content, result.typeLabel) }
                     )
                 }
             } catch (e: GeminiApiException) {

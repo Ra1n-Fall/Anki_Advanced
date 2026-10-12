@@ -8,6 +8,8 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.example.anki_advanced.completion.CompletionStudyScreen
 import com.example.anki_advanced.gemini.DeckGenerationScreen
+import com.example.anki_advanced.gemini.FewShotEditScreen
+import com.example.anki_advanced.gemini.FewShotSettingsScreen
 
 // 이 앱의 유일한 진입점(런처) Activity.
 // 화면 자체를 그리지는 않고, "어떤 화면(Screen)을 어떤 경로(route)로 오갈 수 있는지"만 정의한다.
@@ -114,6 +116,17 @@ class HomeActivity : ComponentActivity() {
                 // 진입 경로: navController.navigate("generateDeck")
                 composable("generateDeck") {
                     DeckGenerationScreen(navController = navController)
+                }
+
+                // 퓨샷 예시 설정 목록 화면. 진입 경로: AI 덱 만들기 화면의 "예시 설정" 버튼.
+                composable("fewShotSettings") {
+                    FewShotSettingsScreen(navController = navController)
+                }
+
+                // 퓨샷 예시 편집 화면. key: "builtin:code" / "custom:<id>" / "custom:new"
+                composable("fewShotEdit/{key}") { backStackEntry ->
+                    val key = backStackEntry.arguments?.getString("key") ?: return@composable
+                    FewShotEditScreen(key = key, navController = navController)
                 }
             }
         }
