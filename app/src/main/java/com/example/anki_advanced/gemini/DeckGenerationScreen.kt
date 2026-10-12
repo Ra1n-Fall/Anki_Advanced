@@ -14,6 +14,16 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.RowScope
+import androidx.compose.material.icons.outlined.CameraAlt
+import androidx.compose.material.icons.outlined.Image
+import androidx.compose.material3.CheckboxDefaults
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.LocalTextStyle
+import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -36,11 +46,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.AutoAwesome
-import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Photo
 import androidx.compose.material.icons.filled.Tune
-import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -48,7 +55,6 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
@@ -79,11 +85,78 @@ import androidx.navigation.NavController
 // ── 색상 팔레트: 이 화면 전용 (HomeScreen/DeckManageScreen과 같은 톤이지만 별도 이름으로 정의) ──
 private val GenBg = Color(0xFFF6F6FA)
 private val GenSurface = Color(0xFFFFFFFF)
-private val GenSurfaceLow = Color(0xFFF0F0F5)
 private val GenPrimary = Color(0xFF4330F9)
 private val GenOnSurface = Color(0xFF2D2F32)
 private val GenOnSurfaceMuted = Color(0xFF5A5B5F)
 private val GenError = Color(0xFFB41340)
+// Stitch 시안(AI로 덱 만들기 리디자인)에서 가져온 색
+private val GenPrimaryDeep = Color(0xFF2B1BE0)        // 주요 버튼 그라데이션의 끝 색
+private val GenTitle = Color(0xFF1E2024)              // 제목 글자
+private val GenHint = Color(0xFF757B88)               // 안내 문구, 입력칸 라벨
+private val GenBorder = Color(0xFFD5D8DF)             // 입력칸/칩/보조 버튼 테두리
+private val GenCardBorder = Color(0xFFE8E8EE)         // 흰 카드의 아주 옅은 테두리
+private val GenChipText = Color(0xFF4A4E5A)
+private val GenChipSelectedBg = Color(0xFFECEBFF)
+private val GenChipSelectedBorder = Color(0xFFDDD6FE)
+private val GenOptionBg = Color(0xFFF6F7FB)           // 세부 형태 체크박스 묶음 배경
+private val GenOptionBorder = Color(0xFFECEEF5)
+private val GenDisabledBg = Color(0xFFEBECEF)
+private val GenDisabledText = Color(0xFF868A94)
+
+private val GenFieldShape = RoundedCornerShape(16.dp)
+private val GenPillShape = RoundedCornerShape(50)
+
+// 흰 카드: 둥근 모서리 + 아주 옅은 테두리. (화면의 큰 덩어리 — 입력 폼, 미리보기, API 키 등록)
+private fun Modifier.genCard(): Modifier = this
+    .fillMaxWidth()
+    .border(1.dp, GenCardBorder.copy(alpha = 0.7f), RoundedCornerShape(24.dp))
+    .clip(RoundedCornerShape(24.dp))
+    .background(GenSurface)
+
+// 카드 안의 연한 회색 묶음 상자 (세부 형태 체크박스, 사용자 지정 유형 안내, 미리보기 카드 한 장)
+private fun Modifier.optionBox(): Modifier = this
+    .border(1.dp, GenOptionBorder, RoundedCornerShape(16.dp))
+    .clip(RoundedCornerShape(16.dp))
+    .background(GenOptionBg)
+
+// 입력칸 공통 색: 흰 배경 + 회색 테두리, 포커스되면 primary 테두리.
+@Composable
+private fun genFieldColors() = OutlinedTextFieldDefaults.colors(
+    focusedContainerColor = GenSurface,
+    unfocusedContainerColor = GenSurface,
+    focusedBorderColor = GenPrimary,
+    unfocusedBorderColor = GenBorder,
+    focusedLabelColor = GenPrimary,
+    unfocusedLabelColor = GenHint
+)
+
+// 가로 꽉 찬 알약 모양 주요 버튼. 활성이면 primary 그라데이션 + 흰 글자, 비활성이면 회색.
+// [문법] content: @Composable RowScope.() -> Unit
+//   버튼 안에 아이콘·텍스트를 가로로 나란히 넣을 수 있도록 Row의 스코프를 그대로 넘겨준다.
+@Composable
+private fun GenPrimaryButton(
+    enabled: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    content: @Composable RowScope.(contentColor: Color) -> Unit
+) {
+    val contentColor = if (enabled) Color.White else GenDisabledText
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(GenPillShape)
+            .background(
+                if (enabled) Brush.linearGradient(listOf(GenPrimary, GenPrimaryDeep))
+                else Brush.linearGradient(listOf(GenDisabledBg, GenDisabledBg))
+            )
+            .clickable(enabled = enabled, onClick = onClick)
+            .padding(vertical = 17.dp),
+        horizontalArrangement = Arrangement.Center,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        content(contentColor)
+    }
+}
 
 // ── ViewModel과 연결되는 진입점 ──────────────────────────────────────────────
 // NavHost가 "generateDeck" 경로로 이동할 때 호출하는 함수(HomeActivity.kt 참고).
@@ -160,13 +233,14 @@ fun DeckGenerationScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("AI로 덱 만들기", fontWeight = FontWeight.Bold) },
+                title = { Text("AI로 덱 만들기", fontWeight = FontWeight.Bold, fontSize = 20.sp, color = GenTitle) },
                 navigationIcon = {
                     IconButton(onClick = { navController?.popBackStack() }) {
-                        Icon(Icons.Filled.ArrowBack, contentDescription = "뒤로")
+                        Icon(Icons.Filled.ArrowBack, contentDescription = "뒤로", tint = GenTitle)
                     }
                 },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = GenSurface)
+                // 상단바를 화면 배경색과 같게 해서, 흰 카드만 떠 보이게 한다.
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = GenBg)
             )
         },
         containerColor = GenBg
@@ -176,7 +250,7 @@ fun DeckGenerationScreen(
                 .padding(innerPadding)
                 .fillMaxSize()
                 .verticalScroll(rememberScrollState())  // 내용(주제 텍스트, 카드 목록 등)이 길어지면 세로 스크롤
-                .padding(20.dp),
+                .padding(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 24.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             // API 키가 없으면 등록 카드만, 있으면 생성 폼을 보여준다 — 두 화면을 조건부로 스위칭.
@@ -263,33 +337,29 @@ private fun ApiKeySetupCard(
 ) {
     Column(
         modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(20.dp))
-            .background(GenSurface)
+            .genCard()
             .padding(20.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-        Text("Gemini API 키 등록", fontWeight = FontWeight.Bold, fontSize = 16.sp, color = GenOnSurface)
+        Text("Gemini API 키 등록", fontWeight = FontWeight.Bold, fontSize = 19.sp, color = GenTitle)
         Text(
             "Google AI Studio에서 발급받은 API 키를 입력하면 이 기기에 암호화되어 저장됩니다.",
             fontSize = 13.sp,
             color = GenOnSurfaceMuted
         )
         OutlinedTextField(
+            shape = GenFieldShape,
+            colors = genFieldColors(),
             value = apiKeyInput,
             onValueChange = onApiKeyInputChange,
             label = { Text("API 키") },
             singleLine = true,
             modifier = Modifier.fillMaxWidth()
         )
-        Button(
-            onClick = onSave,
-            // 빈 문자열로는 저장 못 하게 버튼 자체를 비활성화 — ViewModel의 saveApiKey()도
-            // 한 번 더 blank 체크를 하지만, 버튼 단계에서 막아두면 사용자 경험이 더 매끄럽다.
-            enabled = apiKeyInput.isNotBlank(),
-            modifier = Modifier.align(Alignment.End)
-        ) {
-            Text("저장")
+        // 빈 문자열로는 저장 못 하게 버튼 자체를 비활성화 — ViewModel의 saveApiKey()도
+        // 한 번 더 blank 체크를 하지만, 버튼 단계에서 막아두면 사용자 경험이 더 매끄럽다.
+        GenPrimaryButton(enabled = apiKeyInput.isNotBlank(), onClick = onSave) { color ->
+            Text("저장", color = color, fontWeight = FontWeight.Bold, fontSize = 15.sp)
         }
     }
 }
@@ -313,9 +383,7 @@ private fun GenerationForm(
 ) {
     Column(
         modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(20.dp))
-            .background(GenSurface)
+            .genCard()
             .padding(20.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
@@ -324,14 +392,16 @@ private fun GenerationForm(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text("무엇으로 만들까요?", fontWeight = FontWeight.Bold, fontSize = 16.sp, color = GenOnSurface)
+            Text("무엇으로 만들까요?", fontWeight = FontWeight.Bold, fontSize = 19.sp, color = GenTitle)
             TextButton(onClick = onChangeApiKey) {
-                Text("API 키 변경", fontSize = 12.sp)
+                Text("API 키 변경", fontSize = 13.sp, fontWeight = FontWeight.Medium, color = GenPrimary)
             }
         }
 
         // 덱 제목: 선택 입력. 라벨 문구로 "비워두면 자동 생성"이라는 걸 미리 알려준다.
         OutlinedTextField(
+            shape = GenFieldShape,
+            colors = genFieldColors(),
             value = uiState.deckName,
             onValueChange = onDeckNameChange,
             label = { Text("덱 제목 (선택 — 비워두면 내용으로 자동 생성)") },
@@ -343,9 +413,12 @@ private fun GenerationForm(
         // 여러 줄로 자연스럽게 펼쳐진다 — 위 Column에 verticalScroll이 걸려 있어서
         // 아무리 길어져도 화면 아래쪽 버튼들이 가려지지 않는다.
         OutlinedTextField(
+            shape = GenFieldShape,
+            colors = genFieldColors(),
             value = uiState.content,
             onValueChange = onContentChange,
             label = { Text("내용 (필수 — 카드로 만들 주제나 텍스트)") },
+            minLines = 3,
             modifier = Modifier.fillMaxWidth()
         )
 
@@ -387,16 +460,8 @@ private fun GenerationForm(
                 horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 // weight(1f) 두 개를 나란히 둬서 폭을 정확히 절반씩 나눠 가지게 한다.
-                OutlinedButton(onClick = onCameraClick, modifier = Modifier.weight(1f)) {
-                    Icon(Icons.Filled.CameraAlt, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.width(6.dp))
-                    Text("사진 촬영")
-                }
-                OutlinedButton(onClick = onGalleryClick, modifier = Modifier.weight(1f)) {
-                    Icon(Icons.Filled.Photo, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.width(6.dp))
-                    Text("갤러리에서 선택")
-                }
+                MediaButton("사진 촬영", Icons.Outlined.CameraAlt, onCameraClick, Modifier.weight(1f))
+                MediaButton("갤러리에서 선택", Icons.Outlined.Image, onGalleryClick, Modifier.weight(1f))
             }
         }
 
@@ -408,20 +473,28 @@ private fun GenerationForm(
             // Int(cardCount)다. toIntOrNull()로 숫자가 아닌 입력(예: 지우는 중 빈 문자열)은
             // 조용히 무시하고, 파싱에 성공했을 때만 ViewModel에 새 값을 알린다.
             OutlinedTextField(
+                shape = GenFieldShape,
+                colors = genFieldColors(),
                 value = uiState.cardCount.toString(),
                 onValueChange = { text -> text.toIntOrNull()?.let(onCardCountChange) },
                 label = { Text("장수 (1~30)") },
                 singleLine = true,
+                textStyle = LocalTextStyle.current.copy(fontWeight = FontWeight.SemiBold, color = GenTitle),
                 modifier = Modifier.weight(1f)
             )
             OutlinedTextField(
+                shape = GenFieldShape,
+                colors = genFieldColors(),
                 value = uiState.language,
                 onValueChange = onLanguageChange,
                 label = { Text("언어") },
                 singleLine = true,
+                textStyle = LocalTextStyle.current.copy(fontWeight = FontWeight.SemiBold, color = GenTitle),
                 modifier = Modifier.weight(1f)
             )
         }
+
+        HorizontalDivider(color = GenOptionBorder)
 
         CardTypeSelector(
             choice = uiState.typeChoice,
@@ -432,24 +505,23 @@ private fun GenerationForm(
             onOpenFewShotSettings = onOpenFewShotSettings
         )
 
-        Button(
-            onClick = onGenerateClick,
+        GenPrimaryButton(
             // uiState.canGenerate: 로딩 중이 아니고 (내용 또는 이미지)가 있어야 true.
             // 제목만 입력하고 내용/이미지가 없으면 여기서 자동으로 비활성화된다.
             enabled = uiState.canGenerate,
-            modifier = Modifier.fillMaxWidth()
-        ) {
+            onClick = onGenerateClick,
+            modifier = Modifier.padding(top = 4.dp)
+        ) { color ->
             // 로딩 중이면 스피너+문구, 아니면 아이콘+"생성하기" — 버튼 안에서 상태에 따라
-            // 내용물을 완전히 바꿔치기하는 흔한 패턴 (Button의 content 람다는 RowScope라서
-            // 아이콘/스피너 옆에 Spacer로 간격을 준 Text를 나란히 놓을 수 있다).
+            // 내용물을 완전히 바꿔치기하는 흔한 패턴.
             if (uiState.isLoading) {
-                CircularProgressIndicator(modifier = Modifier.height(18.dp).width(18.dp), color = Color.White)
+                CircularProgressIndicator(modifier = Modifier.size(18.dp), color = color, strokeWidth = 2.dp)
                 Spacer(Modifier.width(8.dp))
-                Text("생성 중...")
+                Text("생성 중...", color = color, fontWeight = FontWeight.Bold, fontSize = 15.5.sp)
             } else {
-                Icon(Icons.Filled.AutoAwesome, contentDescription = null, modifier = Modifier.height(18.dp))
+                Icon(Icons.Filled.AutoAwesome, contentDescription = null, tint = color, modifier = Modifier.size(18.dp))
                 Spacer(Modifier.width(8.dp))
-                Text("생성하기")
+                Text("생성하기", color = color, fontWeight = FontWeight.Bold, fontSize = 15.5.sp)
             }
         }
     }
@@ -475,17 +547,17 @@ private fun CardTypeSelector(
     onStyleToggle: (CardStyle) -> Unit,
     onOpenFewShotSettings: () -> Unit
 ) {
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text("카드 유형", fontWeight = FontWeight.SemiBold, fontSize = 14.sp, color = GenOnSurface)
+            Text("카드 유형", fontWeight = FontWeight.Bold, fontSize = 16.sp, color = GenTitle)
             TextButton(onClick = onOpenFewShotSettings) {
-                Icon(Icons.Filled.Tune, contentDescription = null, modifier = Modifier.size(16.dp))
+                Icon(Icons.Filled.Tune, contentDescription = null, tint = GenPrimary, modifier = Modifier.size(16.dp))
                 Spacer(Modifier.width(4.dp))
-                Text("예시 설정", fontSize = 12.sp)
+                Text("예시 설정", fontSize = 13.sp, fontWeight = FontWeight.Medium, color = GenPrimary)
             }
         }
         Row(
@@ -500,13 +572,31 @@ private fun CardTypeSelector(
                 CardType.entries.map { TypeChoice.Builtin(it) to it.label } +
                 fewShotSettings.customTypes.map { TypeChoice.Custom(it.id) to it.name }
             chips.forEach { (chipChoice, label) ->
+                val selected = choice == chipChoice
                 FilterChip(
-                    selected = choice == chipChoice,
+                    selected = selected,
                     onClick = { onChoiceSelect(chipChoice) },
-                    label = { Text(label) },
+                    label = {
+                        Text(
+                            label,
+                            fontSize = 14.sp,
+                            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium
+                        )
+                    },
+                    shape = RoundedCornerShape(12.dp),
                     colors = FilterChipDefaults.filterChipColors(
-                        selectedContainerColor = GenPrimary.copy(alpha = 0.12f),
+                        containerColor = GenSurface,
+                        labelColor = GenChipText,
+                        selectedContainerColor = GenChipSelectedBg,
                         selectedLabelColor = GenPrimary
+                    ),
+                    border = FilterChipDefaults.filterChipBorder(
+                        enabled = true,
+                        selected = selected,
+                        borderColor = GenBorder,
+                        selectedBorderColor = GenChipSelectedBorder,
+                        borderWidth = 1.dp,
+                        selectedBorderWidth = 1.dp
                     )
                 )
             }
@@ -516,7 +606,9 @@ private fun CardTypeSelector(
             TypeChoice.Auto -> Text(
                 "AI가 내용을 보고 유형을 정한 뒤, 그 유형의 여러 형태를 섞어서 만들어요.",
                 fontSize = 12.sp,
-                color = GenOnSurfaceMuted
+                lineHeight = 18.sp,
+                color = GenHint,
+                modifier = Modifier.padding(horizontal = 4.dp)
             )
             is TypeChoice.Builtin -> BuiltinStyleOptions(
                 type = choice.type,
@@ -528,20 +620,20 @@ private fun CardTypeSelector(
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clip(RoundedCornerShape(14.dp))
-                        .background(GenSurfaceLow)
-                        .padding(14.dp),
+                        .optionBox()
+                        .padding(16.dp),
                     verticalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
                     Text(
                         type.instruction.ifBlank { "작성 지침 없음 — 핵심 내용을 묻는 질문/답 카드로 만들어요." },
-                        fontSize = 13.sp,
-                        color = GenOnSurface
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = GenTitle
                     )
                     Text(
                         if (type.examples.isEmpty()) "예시 없음 (지침만으로 생성)" else "내 예시 ${type.examples.size}개 사용",
                         fontSize = 12.sp,
-                        color = GenOnSurfaceMuted
+                        color = GenHint
                     )
                 }
             }
@@ -560,13 +652,12 @@ private fun BuiltinStyleOptions(
     // 내 예시가 켜져 있어도 고른 형태에 맞는 예시가 없으면 생성 시 기본 예시로 대신한다
     // (GeminiDeckGenerator.builtinPlan) — 여기 문구는 "켜져 있고 예시가 있는지"까지만 보여준다.
     val usingCustom = setting.useCustom && setting.examples.isNotEmpty()
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .clip(RoundedCornerShape(14.dp))
-                .background(GenSurfaceLow)
-                .padding(vertical = 4.dp)
+                .optionBox()
+                .padding(vertical = 6.dp)
         ) {
             CardStyle.forType(type).forEach { style ->
                 Row(
@@ -576,19 +667,25 @@ private fun BuiltinStyleOptions(
                         .padding(horizontal = 4.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Checkbox(checked = style in selectedStyles, onCheckedChange = { onStyleToggle(style) })
+                    Checkbox(
+                        checked = style in selectedStyles,
+                        onCheckedChange = { onStyleToggle(style) },
+                        colors = genCheckboxColors()
+                    )
                     Column {
-                        Text(style.label, fontWeight = FontWeight.Medium, fontSize = 14.sp, color = GenOnSurface)
-                        Text(style.description, fontSize = 12.sp, color = GenOnSurfaceMuted)
+                        Text(style.label, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, color = GenTitle)
+                        Text(style.description, fontSize = 12.sp, color = GenHint)
                     }
                 }
             }
         }
         Text(
-            "둘 다 체크하면 섞어서 만들어요. 최소 하나는 체크돼 있어야 해요.\n" +
+            "둘 다 체크하면 섞어서 만들어요. 최소 하나는 체크돼 있어야 해요. " +
                 if (usingCustom) "내 예시 ${setting.examples.size}개를 사용해요." else "기본 예시를 사용해요.",
             fontSize = 12.sp,
-            color = GenOnSurfaceMuted
+            lineHeight = 18.sp,
+            color = GenHint,
+            modifier = Modifier.padding(horizontal = 4.dp)
         )
     }
 }
@@ -604,9 +701,7 @@ private fun PreviewSection(
 ) {
     Column(
         modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(20.dp))
-            .background(GenSurface)
+            .genCard()
             .padding(20.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
@@ -614,8 +709,8 @@ private fun PreviewSection(
             Text(
                 "생성된 카드 (${uiState.selectedCount}/${uiState.generatedCards.size} 선택됨)",
                 fontWeight = FontWeight.Bold,
-                fontSize = 16.sp,
-                color = GenOnSurface,
+                fontSize = 17.sp,
+                color = GenTitle,
                 modifier = Modifier.weight(1f)  // 남는 공간을 다 차지해서 오른쪽 뱃지를 끝으로 밀어냄
             )
             // Gemini가 1단계에서 판단한 콘텐츠 유형을 작은 알약(pill) 모양 뱃지로 보여준다.
@@ -624,7 +719,7 @@ private fun PreviewSection(
                 Box(
                     modifier = Modifier
                         .clip(RoundedCornerShape(50))
-                        .background(GenPrimary.copy(alpha = 0.1f))
+                        .background(GenChipSelectedBg)
                         .padding(horizontal = 10.dp, vertical = 4.dp)
                 ) {
                     // 사용자가 유형을 직접 골랐으면 "감지"가 아니므로 문구를 구분한다.
@@ -642,6 +737,8 @@ private fun PreviewSection(
         // 여기서 다시 한번 보여준다 — 미리보기를 보고 나서 "역시 이름을 이렇게 바꿔야겠다"
         // 싶을 때 저장 직전에 마지막으로 조정할 수 있게 하기 위함.
         OutlinedTextField(
+            shape = GenFieldShape,
+            colors = genFieldColors(),
             value = uiState.deckName,
             onValueChange = onDeckNameChange,
             label = { Text("덱 이름") },
@@ -664,16 +761,19 @@ private fun PreviewSection(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clip(RoundedCornerShape(14.dp))
-                        .background(GenSurfaceLow)
+                        .optionBox()
                         .clickable { onCardToggle(index) }  // 행 전체를 탭해도 체크박스와 동일하게 토글
                         .padding(horizontal = 8.dp, vertical = 4.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Checkbox(checked = card.selected, onCheckedChange = { onCardToggle(index) })
+                    Checkbox(
+                        checked = card.selected,
+                        onCheckedChange = { onCardToggle(index) },
+                        colors = genCheckboxColors()
+                    )
                     Column(modifier = Modifier.weight(1f)) {
-                        Text(card.front, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, color = GenOnSurface)
-                        Text(card.back, fontSize = 13.sp, color = GenOnSurfaceMuted)
+                        Text(card.front, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, color = GenTitle)
+                        Text(card.back, fontSize = 13.sp, color = GenHint)
                     }
                     // 체크 해제(임시로 저장 대상에서 뺌)와 달리, 이 X 버튼은 목록에서 완전히
                     // 제거한다 — 마음에 안 드는 카드를 아예 없애버리고 싶을 때 쓰는 버튼.
@@ -684,13 +784,44 @@ private fun PreviewSection(
             }
         }
 
-        Button(
-            onClick = onSaveDeck,
+        GenPrimaryButton(
             // 저장 중이 아니고, 선택된 카드가 1장 이상 있고, 덱 이름이 비어있지 않아야 활성화.
             enabled = !uiState.isSaving && uiState.selectedCount > 0 && uiState.deckName.isNotBlank(),
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Text(if (uiState.isSaving) "저장 중..." else "덱으로 저장 (${uiState.selectedCount}장)")
+            onClick = onSaveDeck
+        ) { color ->
+            Text(
+                if (uiState.isSaving) "저장 중..." else "덱으로 저장 (${uiState.selectedCount}장)",
+                color = color,
+                fontWeight = FontWeight.Bold,
+                fontSize = 15.5.sp
+            )
         }
     }
 }
+
+// 사진 촬영 / 갤러리 선택 버튼: 흰 배경 + 회색 테두리 알약, 아이콘만 primary 색.
+@Composable
+private fun MediaButton(text: String, icon: ImageVector, onClick: () -> Unit, modifier: Modifier = Modifier) {
+    Row(
+        modifier = modifier
+            .border(1.dp, GenBorder, GenPillShape)
+            .clip(GenPillShape)
+            .background(GenSurface)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 14.dp),
+        horizontalArrangement = Arrangement.Center,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(icon, contentDescription = null, tint = GenPrimary, modifier = Modifier.size(18.dp))
+        Spacer(Modifier.width(8.dp))
+        Text(text, fontSize = 14.sp, fontWeight = FontWeight.Medium, color = GenOnSurface)
+    }
+}
+
+// 체크박스 공통 색: 체크되면 primary로 채워지고, 아니면 연회색 테두리.
+@Composable
+private fun genCheckboxColors() = CheckboxDefaults.colors(
+    checkedColor = GenPrimary,
+    uncheckedColor = GenBorder,
+    checkmarkColor = Color.White
+)
