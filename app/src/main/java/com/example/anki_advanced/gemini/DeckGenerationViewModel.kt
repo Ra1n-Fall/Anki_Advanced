@@ -45,6 +45,11 @@ data class DeckGenerationUiState(
     val content: String = "",              // 카드로 만들 내용/텍스트 (필수)
     val cardCount: Int = 10,               // 몇 장 만들지
     val language: String = "한국어",         // 카드를 어떤 언어로 작성할지
+    val selectedCardType: CardType? = null, // 사용자가 고른 카드 유형 (null = 자동, Gemini가 분류)
+    // 세부 형태 체크 상태. 유형마다 따로 기억하도록 전체 유형의 형태를 한 Set에 담아둔다
+    // (예: 코드에서 "코드 작성"만 체크해두고 연표로 갔다가 돌아와도 체크 상태가 유지된다).
+    // 기본값은 전부 체크 = 두 형태를 섞어서 생성.
+    val selectedStyles: Set<CardStyle> = CardStyle.entries.toSet(),
     val imagePreview: Bitmap? = null,      // 첨부된 이미지 미리보기 (없으면 null)
     val isLoading: Boolean = false,        // Gemini 호출 진행 중인지 (버튼 로딩 스피너용)
     val errorMessage: String? = null,      // 화면에 보여줄 에러 문구 (없으면 null)
@@ -129,6 +134,26 @@ class DeckGenerationViewModel(application: Application) : AndroidViewModel(appli
         _uiState.update { it.copy(deckName = value) }
     }
 
+    // 유형 칩 선택. null은 "자동"(Gemini가 내용을 보고 유형을 판단).
+    fun onCardTypeSelect(type: CardType?) {
+        _uiState.update { it.copy(selectedCardType = type) }
+    }
+
+    // 세부 형태 체크박스 토글. 같은 유형 안에서 마지막 하나는 해제할 수 없게 막는다 —
+    // 둘 다 꺼지면 "무엇을 물어볼지"가 없는 상태가 되므로, 버튼을 비활성화하고 이유를
+    // 설명하는 것보다 애초에 그 상태로 못 가게 하는 편이 단순하다.
+    fun onStyleToggle(style: CardStyle) {
+        _uiState.update { state ->
+            val styles = state.selectedStyles
+            if (style in styles) {
+                val remainingInType = styles.count { it.cardType == style.cardType && it != style }
+                if (remainingInType == 0) state else state.copy(selectedStyles = styles - style)
+            } else {
+                state.copy(selectedStyles = styles + style)
+            }
+        }
+    }
+
     // 카메라 촬영/갤러리 선택 후 화면(DeckGenerationScreen)이 넘겨주는 Uri를 실제
     // 픽셀 데이터로 읽어서 (미리보기용 Bitmap + 전송용 압축 바이트)로 바꾸는 함수.
     //
@@ -162,6 +187,7 @@ class DeckGenerationViewModel(application: Application) : AndroidViewModel(appli
     }
 
     // "생성하기" 버튼: Gemini를 2단계(유형 분류 → 유형별 생성)로 호출해서 카드 후보 목록을 만든다.
+    // (유형을 직접 골랐으면 분류 단계는 건너뛴다)
     // 이 시점엔 아직 DB에 아무것도 쓰지 않는다 — 실제 저장은 사용자가 미리보기를 보고
     // "덱으로 저장"을 눌러야만 일어난다(onSaveDeck).
     fun onGenerateClick() {
@@ -199,7 +225,13 @@ class DeckGenerationViewModel(application: Application) : AndroidViewModel(appli
                     content = state.content.trim(),
                     image = image,
                     count = state.cardCount,
-                    language = state.language
+                    language = state.language,
+                    // 유형을 직접 골랐으면 그 유형의 체크된 형태만 넘기고(분류 호출도 생략됨),
+                    // 자동이면 null + 빈 Set → 분류된 유형의 형태를 전부 섞어서 생성.
+                    cardType = state.selectedCardType,
+                    styles = state.selectedCardType
+                        ?.let { type -> state.selectedStyles.filter { it.cardType == type }.toSet() }
+                        .orEmpty()
                 )
                 _uiState.update { current ->
                     current.copy(

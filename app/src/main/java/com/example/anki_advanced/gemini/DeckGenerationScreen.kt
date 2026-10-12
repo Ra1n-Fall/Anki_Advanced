@@ -16,6 +16,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -42,6 +43,8 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedButton
@@ -189,6 +192,8 @@ fun DeckGenerationScreen(
                     onContentChange = viewModel::onContentChange,
                     onCardCountChange = viewModel::onCardCountChange,
                     onLanguageChange = viewModel::onLanguageChange,
+                    onCardTypeSelect = viewModel::onCardTypeSelect,
+                    onStyleToggle = viewModel::onStyleToggle,
                     onGenerateClick = viewModel::onGenerateClick,
                     onChangeApiKey = viewModel::clearApiKey,
                     onImageRemove = viewModel::onImageRemoved,
@@ -294,6 +299,8 @@ private fun GenerationForm(
     onContentChange: (String) -> Unit,
     onCardCountChange: (Int) -> Unit,
     onLanguageChange: (String) -> Unit,
+    onCardTypeSelect: (CardType?) -> Unit,
+    onStyleToggle: (CardStyle) -> Unit,
     onGenerateClick: () -> Unit,
     onChangeApiKey: () -> Unit,
     onImageRemove: () -> Unit,
@@ -412,6 +419,13 @@ private fun GenerationForm(
             )
         }
 
+        CardTypeSelector(
+            selectedType = uiState.selectedCardType,
+            selectedStyles = uiState.selectedStyles,
+            onTypeSelect = onCardTypeSelect,
+            onStyleToggle = onStyleToggle
+        )
+
         Button(
             onClick = onGenerateClick,
             // uiState.canGenerate: 로딩 중이 아니고 (내용 또는 이미지)가 있어야 true.
@@ -431,6 +445,82 @@ private fun GenerationForm(
                 Spacer(Modifier.width(8.dp))
                 Text("생성하기")
             }
+        }
+    }
+}
+
+// ── 카드 유형 선택 칩 + (유형을 골랐을 때만) 세부 형태 체크박스 ─────────────
+// "자동"이면 Gemini가 내용을 보고 유형을 정하고 그 유형의 두 형태를 섞어서 만든다.
+// 유형을 직접 고르면 그 유형의 세부 형태 체크박스 2개가 나타나고, 체크한 형태로만 만든다.
+//
+// [문법] Row(Modifier.horizontalScroll(rememberScrollState()))
+//   칩 5개가 좁은 화면 폭을 넘칠 수 있어서, 넘치면 옆으로 밀어서 볼 수 있게 가로 스크롤을 건다.
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun CardTypeSelector(
+    selectedType: CardType?,
+    selectedStyles: Set<CardStyle>,
+    onTypeSelect: (CardType?) -> Unit,
+    onStyleToggle: (CardStyle) -> Unit
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text("카드 유형", fontWeight = FontWeight.SemiBold, fontSize = 14.sp, color = GenOnSurface)
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            // [문법] listOf<CardType?>(null) + CardType.entries
+            //   맨 앞에 "자동"을 뜻하는 null을 하나 붙여서, 칩 5개를 같은 반복문으로 그린다.
+            (listOf<CardType?>(null) + CardType.entries).forEach { type ->
+                FilterChip(
+                    selected = selectedType == type,
+                    onClick = { onTypeSelect(type) },
+                    label = { Text(type?.label ?: "자동") },
+                    colors = FilterChipDefaults.filterChipColors(
+                        selectedContainerColor = GenPrimary.copy(alpha = 0.12f),
+                        selectedLabelColor = GenPrimary
+                    )
+                )
+            }
+        }
+
+        if (selectedType == null) {
+            Text(
+                "AI가 내용을 보고 유형을 정한 뒤, 그 유형의 여러 형태를 섞어서 만들어요.",
+                fontSize = 12.sp,
+                color = GenOnSurfaceMuted
+            )
+        } else {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(GenSurfaceLow)
+                    .padding(vertical = 4.dp)
+            ) {
+                CardStyle.forType(selectedType).forEach { style ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onStyleToggle(style) }  // 행 전체를 탭해도 토글
+                            .padding(horizontal = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Checkbox(checked = style in selectedStyles, onCheckedChange = { onStyleToggle(style) })
+                        Column {
+                            Text(style.label, fontWeight = FontWeight.Medium, fontSize = 14.sp, color = GenOnSurface)
+                            Text(style.description, fontSize = 12.sp, color = GenOnSurfaceMuted)
+                        }
+                    }
+                }
+            }
+            Text(
+                "둘 다 체크하면 섞어서 만들어요. 최소 하나는 체크돼 있어야 해요.",
+                fontSize = 12.sp,
+                color = GenOnSurfaceMuted
+            )
         }
     }
 }
@@ -469,8 +559,9 @@ private fun PreviewSection(
                         .background(GenPrimary.copy(alpha = 0.1f))
                         .padding(horizontal = 10.dp, vertical = 4.dp)
                 ) {
+                    // 사용자가 유형을 직접 골랐으면 "감지"가 아니므로 문구를 구분한다.
                     Text(
-                        "감지된 유형: ${type.label}",
+                        (if (uiState.selectedCardType != null) "유형: " else "감지된 유형: ") + type.label,
                         fontSize = 11.sp,
                         fontWeight = FontWeight.SemiBold,
                         color = GenPrimary
