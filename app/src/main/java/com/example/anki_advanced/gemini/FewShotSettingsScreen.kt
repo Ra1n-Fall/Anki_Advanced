@@ -4,37 +4,52 @@ package com.example.anki_advanced.gemini
 //   FewShotSettingsScreen ("fewShotSettings"): 목록. 기본 유형 4개의 "내 예시 사용" 스위치와
 //     사용자 지정 유형 목록을 보여준다. 덱 만들기 화면의 "예시 설정" 버튼으로 들어온다.
 //   FewShotEditScreen ("fewShotEdit/{key}"): 유형 하나의 예시를 편집한다. 목록에서 항목을 누르면 들어온다.
+//
+// 시각 디자인은 Stitch에서 재생성한 시안을 따른다:
+//   - 테두리 대신 배경색 차이로 영역을 나눈다 (흰 카드 ↔ 연회색 블록 ↔ 흰 입력칸)
+//   - 입력칸은 평소엔 테두리가 없고, 포커스될 때만 primary 색 테두리가 생긴다
+//   - 주요 버튼(저장)은 그라데이션 알약 모양, 보조 버튼은 흰/연회색 알약 모양
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -49,8 +64,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -62,12 +81,16 @@ private val SetBg = Color(0xFFF6F6FA)
 private val SetSurface = Color(0xFFFFFFFF)
 private val SetSurfaceLow = Color(0xFFF0F0F5)
 private val SetPrimary = Color(0xFF4330F9)
+private val SetPrimaryDeep = Color(0xFF2B1BE0)  // 저장 버튼 그라데이션의 끝 색
 private val SetOnSurface = Color(0xFF2D2F32)
 private val SetOnSurfaceMuted = Color(0xFF5A5B5F)
+private val SetSwitchTrackOff = Color(0xFFDCDCE2)
 private val SetError = Color(0xFFB41340)
 
+private val PillShape = RoundedCornerShape(50)
+private val FieldShape = RoundedCornerShape(16.dp)
+
 // ══ 목록 화면 ══════════════════════════════════════════════════════════════
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun FewShotSettingsScreen(
     navController: NavController? = null,
@@ -78,17 +101,7 @@ fun FewShotSettingsScreen(
     var pendingDelete by remember { mutableStateOf<CustomCardType?>(null) }
 
     Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text("퓨샷 예시 설정", fontWeight = FontWeight.Bold) },
-                navigationIcon = {
-                    IconButton(onClick = { navController?.popBackStack() }) {
-                        Icon(Icons.Filled.ArrowBack, contentDescription = "뒤로")
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = SetSurface)
-            )
-        },
+        topBar = { SettingsTopBar(title = "퓨샷 예시 설정", onBack = { navController?.popBackStack() }) },
         containerColor = SetBg
     ) { innerPadding ->
         Column(
@@ -96,15 +109,10 @@ fun FewShotSettingsScreen(
                 .padding(innerPadding)
                 .fillMaxSize()
                 .verticalScroll(rememberScrollState())
-                .padding(20.dp),
+                .padding(horizontal = 16.dp, vertical = 16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            Text(
-                "AI에게 \"이런 자료로는 이런 카드를 만들어\"라고 보여주는 예시를 직접 정할 수 있어요. " +
-                    "예시가 실제 학습 자료와 비슷할수록 결과 카드도 원하는 모양에 가까워져요.",
-                fontSize = 13.sp,
-                color = SetOnSurfaceMuted
-            )
+            IntroCard()
 
             SettingsSection(title = "기본 유형", subtitle = "스위치를 켜면 기본 예시 대신 내 예시를 사용해요.") {
                 CardType.entries.forEach { type ->
@@ -115,7 +123,7 @@ fun FewShotSettingsScreen(
                         else "내 예시 ${setting.examples.size}개",
                         onClick = { navController?.navigate("fewShotEdit/builtin:${type.id}") }
                     ) {
-                        Switch(
+                        SoftSwitch(
                             checked = setting.useCustom,
                             onCheckedChange = { viewModel.setUseCustom(type, it) }
                         )
@@ -130,9 +138,12 @@ fun FewShotSettingsScreen(
                 if (settings.customTypes.isEmpty()) {
                     Text(
                         "아직 만든 유형이 없어요.",
-                        fontSize = 13.sp,
+                        fontSize = 14.sp,
                         color = SetOnSurfaceMuted,
-                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp)
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 20.dp),
+                        textAlign = TextAlign.Center
                     )
                 }
                 settings.customTypes.forEach { type ->
@@ -143,20 +154,17 @@ fun FewShotSettingsScreen(
                         onClick = { navController?.navigate("fewShotEdit/custom:${type.id}") }
                     ) {
                         IconButton(onClick = { pendingDelete = type }) {
-                            Icon(Icons.Filled.Delete, contentDescription = "삭제", tint = SetOnSurfaceMuted)
+                            Icon(Icons.Outlined.Delete, contentDescription = "삭제", tint = SetOnSurfaceMuted)
                         }
                     }
                 }
-                OutlinedButton(
+                PillButton(
+                    text = "새 유형 만들기",
+                    icon = Icons.Filled.Add,
+                    containerColor = SetSurfaceLow,
                     onClick = { navController?.navigate("fewShotEdit/custom:new") },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(top = 4.dp)
-                ) {
-                    Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.width(6.dp))
-                    Text("새 유형 만들기")
-                }
+                    modifier = Modifier.padding(top = 4.dp)
+                )
             }
         }
     }
@@ -164,17 +172,52 @@ fun FewShotSettingsScreen(
     pendingDelete?.let { type ->
         AlertDialog(
             onDismissRequest = { pendingDelete = null },
-            title = { Text("'${type.name}' 유형 삭제") },
-            text = { Text("이 유형과 예시가 모두 삭제돼요. 이미 만든 카드에는 영향이 없어요.") },
+            containerColor = SetSurface,
+            shape = RoundedCornerShape(28.dp),
+            title = { Text("'${type.name}' 유형 삭제", fontWeight = FontWeight.Bold, color = SetOnSurface) },
+            text = { Text("이 유형과 예시가 모두 삭제돼요. 이미 만든 카드에는 영향이 없어요.", color = SetOnSurfaceMuted) },
             confirmButton = {
                 TextButton(onClick = {
                     viewModel.deleteCustomType(type.id)
                     pendingDelete = null
-                }) { Text("삭제", color = SetError) }
+                }) { Text("삭제", color = SetError, fontWeight = FontWeight.Bold) }
             },
             dismissButton = {
-                TextButton(onClick = { pendingDelete = null }) { Text("취소") }
+                TextButton(onClick = { pendingDelete = null }) {
+                    Text("취소", color = SetPrimary, fontWeight = FontWeight.Bold)
+                }
             }
+        )
+    }
+}
+
+// 목록 화면 맨 위 안내 카드: 원형 배경 안의 반짝이 아이콘 + 설명 문구
+@Composable
+private fun IntroCard() {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(20.dp))
+            .background(SetSurfaceLow)
+            .padding(16.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            modifier = Modifier
+                .size(40.dp)
+                .clip(CircleShape)
+                .background(SetPrimary.copy(alpha = 0.12f)),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(Icons.Filled.AutoAwesome, contentDescription = null, tint = SetPrimary, modifier = Modifier.size(20.dp))
+        }
+        Spacer(Modifier.width(14.dp))
+        Text(
+            "AI에게 \"이런 자료로는 이런 카드를 만들어\"라고 보여주는 예시를 직접 정할 수 있어요. " +
+                "예시가 실제 학습 자료와 비슷할수록 결과 카드도 원하는 모양에 가까워져요.",
+            fontSize = 13.sp,
+            lineHeight = 20.sp,
+            color = SetOnSurfaceMuted
         )
     }
 }
@@ -185,13 +228,13 @@ private fun SettingsSection(title: String, subtitle: String, content: @Composabl
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(20.dp))
+            .clip(RoundedCornerShape(24.dp))
             .background(SetSurface)
-            .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp)
+            .padding(20.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-        Text(title, fontWeight = FontWeight.Bold, fontSize = 16.sp, color = SetOnSurface)
-        Text(subtitle, fontSize = 12.sp, color = SetOnSurfaceMuted)
+        Text(title, fontWeight = FontWeight.Bold, fontSize = 18.sp, color = SetOnSurface)
+        Text(subtitle, fontSize = 12.sp, color = SetOnSurfaceMuted, modifier = Modifier.padding(bottom = 4.dp))
         content()
     }
 }
@@ -207,17 +250,18 @@ private fun SettingsRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(14.dp))
+            .clip(RoundedCornerShape(16.dp))
             .background(SetSurfaceLow)
             .clickable(onClick = onClick)
-            .padding(start = 14.dp, end = 8.dp, top = 10.dp, bottom = 10.dp),
+            .padding(start = 16.dp, end = 12.dp, top = 14.dp, bottom = 14.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Column(modifier = Modifier.weight(1f)) {
-            Text(title, fontWeight = FontWeight.SemiBold, fontSize = 15.sp, color = SetOnSurface)
+            Text(title, fontWeight = FontWeight.Bold, fontSize = 16.sp, color = SetOnSurface)
+            Spacer(Modifier.height(2.dp))
             Text(
                 subtitle,
-                fontSize = 12.sp,
+                fontSize = 13.sp,
                 color = SetOnSurfaceMuted,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
@@ -229,7 +273,6 @@ private fun SettingsRow(
 
 // ══ 편집 화면 ══════════════════════════════════════════════════════════════
 // key: "builtin:<유형 id>" / "custom:<id>" / "custom:new" (FewShotEditViewModel.load 참고)
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun FewShotEditScreen(
     key: String,
@@ -252,19 +295,10 @@ fun FewShotEditScreen(
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = { Text(title, fontWeight = FontWeight.Bold) },
-                navigationIcon = {
-                    IconButton(onClick = { navController?.popBackStack() }) {
-                        Icon(Icons.Filled.ArrowBack, contentDescription = "뒤로")
-                    }
-                },
-                actions = {
-                    TextButton(onClick = viewModel::save) {
-                        Text("저장", fontWeight = FontWeight.Bold)
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = SetSurface)
+            SettingsTopBar(
+                title = title,
+                onBack = { navController?.popBackStack() },
+                onSave = viewModel::save
             )
         },
         containerColor = SetBg
@@ -275,7 +309,7 @@ fun FewShotEditScreen(
                 .padding(innerPadding)
                 .fillMaxSize()
                 .verticalScroll(rememberScrollState())
-                .padding(20.dp),
+                .padding(horizontal = 16.dp, vertical = 16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             if (uiState.isCustom) {
@@ -297,11 +331,23 @@ fun FewShotEditScreen(
                 Text(it, color = SetError, fontSize = 13.sp, fontWeight = FontWeight.Medium)
             }
 
-            Text(
-                "예시는 2~5개 정도가 적당해요. 앞·뒤가 비어 있는 카드와 자료가 빈 예시는 저장할 때 빠져요.",
-                fontSize = 12.sp,
-                color = SetOnSurfaceMuted
-            )
+            Row(modifier = Modifier.padding(horizontal = 4.dp)) {
+                Icon(
+                    Icons.Outlined.Info,
+                    contentDescription = null,
+                    tint = SetOnSurfaceMuted,
+                    modifier = Modifier
+                        .padding(top = 2.dp)
+                        .size(16.dp)
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    "예시는 2~5개 정도가 적당해요. 앞·뒤가 비어 있는 카드와 자료가 빈 예시는 저장할 때 빠져요.",
+                    fontSize = 13.sp,
+                    lineHeight = 19.sp,
+                    color = SetOnSurfaceMuted
+                )
+            }
 
             uiState.examples.forEachIndexed { exampleIndex, example ->
                 ExampleEditor(
@@ -312,11 +358,14 @@ fun FewShotEditScreen(
                 )
             }
 
-            OutlinedButton(onClick = viewModel::addExample, modifier = Modifier.fillMaxWidth()) {
-                Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(18.dp))
-                Spacer(Modifier.width(6.dp))
-                Text("예시 추가")
-            }
+            PillButton(
+                text = "예시 추가",
+                icon = Icons.Filled.Add,
+                containerColor = SetSurface,
+                onClick = viewModel::addExample,
+                elevated = true
+            )
+            Spacer(Modifier.height(8.dp))
         }
     }
 }
@@ -332,25 +381,26 @@ private fun CustomTypeHeader(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(20.dp))
+            .clip(RoundedCornerShape(24.dp))
             .background(SetSurface)
             .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp)
+        verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        OutlinedTextField(
+        SoftTextField(
             value = name,
             onValueChange = onNameChange,
-            label = { Text("유형 이름 (필수, 예: 영단어)") },
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth()
+            label = "유형 이름 (필수, 예: 영단어)",
+            placeholder = "예: 토익 빈출 영단어",
+            containerColor = SetSurfaceLow,
+            singleLine = true
         )
-        OutlinedTextField(
+        SoftTextField(
             value = instruction,
             onValueChange = onInstructionChange,
-            label = { Text("작성 지침 (선택)") },
-            placeholder = { Text("예: 영단어를 front에, 뜻과 예문 하나를 back에 담아.") },
-            minLines = 2,
-            modifier = Modifier.fillMaxWidth()
+            label = "작성 지침 (선택)",
+            placeholder = "예: 영단어를 앞면에, 뜻과 예문 하나를 뒷면에 담아.",
+            containerColor = SetSurfaceLow,
+            minLines = 2
         )
     }
 }
@@ -365,24 +415,34 @@ private fun BuiltinHeader(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(20.dp))
+            .clip(RoundedCornerShape(24.dp))
             .background(SetSurface)
-            .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp)
+            .padding(20.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
+        Row(verticalAlignment = Alignment.Top) {
             Column(modifier = Modifier.weight(1f)) {
-                Text("내 예시 사용", fontWeight = FontWeight.SemiBold, fontSize = 15.sp, color = SetOnSurface)
+                Text("내 예시 사용", fontWeight = FontWeight.Bold, fontSize = 18.sp, color = SetOnSurface)
+                Spacer(Modifier.height(6.dp))
                 Text(
                     "켜면 기본 예시 대신 아래 예시를 사용해요. 고른 형태에 맞는 내 예시가 없으면 기본 예시로 대신해요.",
-                    fontSize = 12.sp,
+                    fontSize = 13.sp,
+                    lineHeight = 19.sp,
                     color = SetOnSurfaceMuted
                 )
             }
-            Switch(checked = useCustom, onCheckedChange = onUseCustomChange)
+            Spacer(Modifier.width(12.dp))
+            SoftSwitch(checked = useCustom, onCheckedChange = onUseCustomChange)
         }
-        TextButton(onClick = onImportDefaults) {
-            Text("기본 예시 불러와서 고치기", fontSize = 13.sp)
+        Row(
+            modifier = Modifier
+                .clip(RoundedCornerShape(8.dp))
+                .clickable(onClick = onImportDefaults)
+                .padding(vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text("기본 예시 불러와서 고치기", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = SetPrimary)
+            Icon(Icons.Filled.ChevronRight, contentDescription = null, tint = SetPrimary, modifier = Modifier.size(20.dp))
         }
     }
 }
@@ -398,100 +458,280 @@ private fun ExampleEditor(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(20.dp))
+            .clip(RoundedCornerShape(24.dp))
             .background(SetSurface)
-            .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp)
+            .padding(start = 16.dp, end = 8.dp, top = 8.dp, bottom = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                Modifier
+                    .size(8.dp)
+                    .clip(CircleShape)
+                    .background(SetPrimary)
+            )
+            Spacer(Modifier.width(10.dp))
             Text(
                 "예시 ${index + 1}",
                 fontWeight = FontWeight.Bold,
-                fontSize = 15.sp,
+                fontSize = 18.sp,
                 color = SetOnSurface,
                 modifier = Modifier.weight(1f)
             )
             IconButton(onClick = { viewModel.removeExample(index) }) {
-                Icon(Icons.Filled.Delete, contentDescription = "예시 삭제", tint = SetOnSurfaceMuted)
+                Icon(Icons.Outlined.Delete, contentDescription = "예시 삭제", tint = SetOnSurfaceMuted)
             }
         }
 
-        OutlinedTextField(
-            value = example.source,
-            onValueChange = { viewModel.setSource(index, it) },
-            label = { Text("자료 (이런 내용이 들어오면)") },
-            minLines = 2,
-            modifier = Modifier.fillMaxWidth()
-        )
+        Column(
+            modifier = Modifier.padding(end = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            SoftTextField(
+                value = example.source,
+                onValueChange = { viewModel.setSource(index, it) },
+                label = "자료 (이런 내용이 들어오면)",
+                placeholder = "학습할 원본 텍스트나 문장을 입력하세요",
+                containerColor = SetSurfaceLow,
+                minLines = 2
+            )
 
-        Text("→ 이런 카드를 만든다", fontSize = 12.sp, color = SetOnSurfaceMuted)
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(start = 4.dp)) {
+                Icon(
+                    Icons.AutoMirrored.Filled.ArrowForward,
+                    contentDescription = null,
+                    tint = SetPrimary,
+                    modifier = Modifier.size(16.dp)
+                )
+                Spacer(Modifier.width(6.dp))
+                Text("이런 카드를 만든다", fontSize = 14.sp, color = SetOnSurfaceMuted)
+            }
 
-        example.cards.forEachIndexed { cardIndex, card ->
-            Column(
+            example.cards.forEachIndexed { cardIndex, card ->
+                CardEditor(
+                    cardIndex = cardIndex,
+                    card = card,
+                    styleOptions = styleOptions,
+                    onRemove = { viewModel.removeCard(index, cardIndex) },
+                    onStyleSelect = { viewModel.setStyle(index, cardIndex, it) },
+                    onFrontChange = { viewModel.setFront(index, cardIndex, it) },
+                    onBackChange = { viewModel.setBack(index, cardIndex, it) }
+                )
+            }
+
+            Row(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(14.dp))
-                    .background(SetSurfaceLow)
-                    .padding(start = 12.dp, end = 4.dp, top = 4.dp, bottom = 12.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .clickable { viewModel.addCard(index) }
+                    .padding(horizontal = 4.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        "카드 ${cardIndex + 1}",
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = SetOnSurface,
-                        modifier = Modifier.weight(1f)
-                    )
-                    IconButton(onClick = { viewModel.removeCard(index, cardIndex) }) {
-                        Icon(Icons.Filled.Close, contentDescription = "카드 삭제", tint = SetOnSurfaceMuted)
-                    }
-                }
-                // 기본 유형이면 이 카드가 어떤 세부 형태인지 고른다. 덱 만들기에서 형태를
-                // 하나만 체크했을 때 그 형태의 카드만 예시로 보내기 위해 필요하다.
-                if (styleOptions.isNotEmpty()) {
-                    Row(
-                        modifier = Modifier
-                            .padding(end = 8.dp)
-                            .horizontalScroll(rememberScrollState()),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        styleOptions.forEach { style ->
-                            FilterChip(
-                                selected = card.style == style,
-                                onClick = { viewModel.setStyle(index, cardIndex, style) },
-                                label = { Text(style.label, fontSize = 12.sp) },
-                                colors = FilterChipDefaults.filterChipColors(
-                                    selectedContainerColor = SetPrimary.copy(alpha = 0.12f),
-                                    selectedLabelColor = SetPrimary
-                                )
-                            )
-                        }
-                    }
-                }
-                OutlinedTextField(
-                    value = card.front,
-                    onValueChange = { viewModel.setFront(index, cardIndex, it) },
-                    label = { Text("앞면 (질문)") },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(end = 8.dp)
-                )
-                OutlinedTextField(
-                    value = card.back,
-                    onValueChange = { viewModel.setBack(index, cardIndex, it) },
-                    label = { Text("뒷면 (답)") },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(end = 8.dp)
-                )
+                Icon(Icons.Filled.Add, contentDescription = null, tint = SetPrimary, modifier = Modifier.size(20.dp))
+                Spacer(Modifier.width(6.dp))
+                Text("카드 추가", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = SetPrimary)
             }
         }
+    }
+}
 
-        TextButton(onClick = { viewModel.addCard(index) }) {
-            Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(16.dp))
-            Spacer(Modifier.width(4.dp))
-            Text("카드 추가", fontSize = 13.sp)
+// 예시 안의 카드 한 장: 연회색 블록 위에 (형태 칩) + 흰 앞면/뒷면 입력칸
+@Composable
+private fun CardEditor(
+    cardIndex: Int,
+    card: DraftCard,
+    styleOptions: List<CardStyle>,
+    onRemove: () -> Unit,
+    onStyleSelect: (CardStyle) -> Unit,
+    onFrontChange: (String) -> Unit,
+    onBackChange: (String) -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(20.dp))
+            .background(SetSurfaceLow)
+            .padding(start = 16.dp, end = 4.dp, top = 4.dp, bottom = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                "카드 ${cardIndex + 1}",
+                fontSize = 16.sp,
+                fontWeight = FontWeight.Bold,
+                color = SetOnSurface,
+                modifier = Modifier.weight(1f)
+            )
+            IconButton(onClick = onRemove) {
+                Icon(Icons.Filled.Close, contentDescription = "카드 삭제", tint = SetOnSurfaceMuted)
+            }
         }
+        Column(
+            modifier = Modifier.padding(end = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            // 기본 유형이면 이 카드가 어떤 세부 형태인지 고른다. 덱 만들기에서 형태를
+            // 하나만 체크했을 때 그 형태의 카드만 예시로 보내기 위해 필요하다.
+            if (styleOptions.isNotEmpty()) {
+                Row(
+                    modifier = Modifier.horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    styleOptions.forEach { style ->
+                        StyleChip(
+                            label = style.label,
+                            selected = card.style == style,
+                            onClick = { onStyleSelect(style) }
+                        )
+                    }
+                }
+            }
+            SoftTextField(
+                value = card.front,
+                onValueChange = onFrontChange,
+                label = "앞면 (질문)",
+                containerColor = SetSurface
+            )
+            SoftTextField(
+                value = card.back,
+                onValueChange = onBackChange,
+                label = "뒷면 (답)",
+                containerColor = SetSurface
+            )
+        }
+    }
+}
+
+// ══ 공용 부품 ══════════════════════════════════════════════════════════════
+
+// 상단바: 흰 배경 + 아래쪽 옅은 그림자. onSave가 있으면 오른쪽에 그라데이션 "저장" 버튼.
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SettingsTopBar(title: String, onBack: () -> Unit, onSave: (() -> Unit)? = null) {
+    Surface(color = SetSurface, shadowElevation = 2.dp) {
+        TopAppBar(
+            title = { Text(title, fontWeight = FontWeight.Bold, fontSize = 22.sp, color = SetOnSurface) },
+            navigationIcon = {
+                IconButton(onClick = onBack) {
+                    Icon(Icons.Filled.ArrowBack, contentDescription = "뒤로", tint = SetOnSurface)
+                }
+            },
+            actions = {
+                if (onSave != null) {
+                    // [문법] Modifier.background(Brush.linearGradient(...))
+                    //   단색 대신 두 색이 대각선으로 섞이는 그라데이션으로 배경을 칠한다.
+                    Box(
+                        modifier = Modifier
+                            .padding(end = 12.dp)
+                            .clip(PillShape)
+                            .background(Brush.linearGradient(listOf(SetPrimary, SetPrimaryDeep)))
+                            .clickable(onClick = onSave)
+                            .padding(horizontal = 22.dp, vertical = 10.dp)
+                    ) {
+                        Text("저장", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                    }
+                }
+            },
+            colors = TopAppBarDefaults.topAppBarColors(containerColor = SetSurface)
+        )
+    }
+}
+
+// 테두리 없는 알약 모양 스위치. 꺼져 있을 때 회색 트랙 + 큰 흰 원, 켜지면 primary 트랙.
+// [문법] thumbContent = { Spacer(...) }
+//   Material3 Switch는 thumbContent가 있으면 꺼진 상태에서도 원(thumb)을 크게 그린다.
+//   안에 그릴 아이콘은 없으므로 빈 Spacer만 넣어서 "항상 큰 원" 효과만 얻는다.
+@Composable
+private fun SoftSwitch(checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
+    Switch(
+        checked = checked,
+        onCheckedChange = onCheckedChange,
+        thumbContent = { Spacer(Modifier.size(SwitchDefaults.IconSize)) },
+        colors = SwitchDefaults.colors(
+            checkedTrackColor = SetPrimary,
+            checkedThumbColor = Color.White,
+            checkedBorderColor = Color.Transparent,
+            uncheckedTrackColor = SetSwitchTrackOff,
+            uncheckedThumbColor = Color.White,
+            uncheckedBorderColor = Color.Transparent
+        )
+    )
+}
+
+// 평소엔 테두리 없이 배경색(containerColor)만 있고, 포커스되면 primary 테두리가 생기는 입력칸.
+// 놓이는 곳의 배경과 대비되는 색을 넘겨준다 (흰 카드 위엔 연회색, 연회색 블록 위엔 흰색).
+@Composable
+private fun SoftTextField(
+    value: String,
+    onValueChange: (String) -> Unit,
+    label: String,
+    containerColor: Color,
+    placeholder: String? = null,
+    singleLine: Boolean = false,
+    minLines: Int = 1
+) {
+    OutlinedTextField(
+        value = value,
+        onValueChange = onValueChange,
+        label = { Text(label) },
+        placeholder = placeholder?.let { { Text(it) } },
+        singleLine = singleLine,
+        minLines = minLines,
+        shape = FieldShape,
+        colors = OutlinedTextFieldDefaults.colors(
+            focusedContainerColor = containerColor,
+            unfocusedContainerColor = containerColor,
+            focusedBorderColor = SetPrimary,
+            unfocusedBorderColor = Color.Transparent,
+            focusedLabelColor = SetPrimary,
+            unfocusedLabelColor = SetOnSurfaceMuted,
+            unfocusedPlaceholderColor = SetOnSurfaceMuted.copy(alpha = 0.6f),
+            focusedPlaceholderColor = SetOnSurfaceMuted.copy(alpha = 0.6f)
+        ),
+        modifier = Modifier.fillMaxWidth()
+    )
+}
+
+// 세부 형태 선택 칩: 선택되면 연보라 배경 + primary 글자, 아니면 흰 배경. 테두리 없음.
+@Composable
+private fun StyleChip(label: String, selected: Boolean, onClick: () -> Unit) {
+    FilterChip(
+        selected = selected,
+        onClick = onClick,
+        label = { Text(label, fontSize = 14.sp, fontWeight = FontWeight.Medium) },
+        shape = RoundedCornerShape(12.dp),
+        border = null,
+        colors = FilterChipDefaults.filterChipColors(
+            containerColor = SetSurface,
+            labelColor = SetOnSurface,
+            selectedContainerColor = SetPrimary.copy(alpha = 0.15f),
+            selectedLabelColor = SetPrimary
+        )
+    )
+}
+
+// 가로 꽉 찬 알약 버튼 (아이콘 + primary 굵은 글씨). elevated면 옅은 그림자로 살짝 띄운다.
+@Composable
+private fun PillButton(
+    text: String,
+    icon: ImageVector,
+    containerColor: Color,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    elevated: Boolean = false
+) {
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .then(if (elevated) Modifier.shadow(6.dp, PillShape, ambientColor = SetPrimary, spotColor = SetPrimary.copy(alpha = 0.3f)) else Modifier)
+            .clip(PillShape)
+            .background(containerColor)
+            .clickable(onClick = onClick)
+            .padding(PaddingValues(vertical = 18.dp)),
+        horizontalArrangement = Arrangement.Center,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(icon, contentDescription = null, tint = SetPrimary, modifier = Modifier.size(22.dp))
+        Spacer(Modifier.width(8.dp))
+        Text(text, fontSize = 17.sp, fontWeight = FontWeight.Bold, color = SetPrimary)
     }
 }
