@@ -19,6 +19,10 @@ interface CardDao {
     @Query("SELECT * FROM cards WHERE deckId = :deckId ORDER BY id ASC")
     suspend fun getByDeck(deckId: Long): List<CardEntity>
 
+    // id로 카드 한 장 조회. 약점 카드 세션에서 미리 골라둔 id 순서대로 카드를 꺼낼 때 사용.
+    @Query("SELECT * FROM cards WHERE id = :id")
+    suspend fun getById(id: Long): CardEntity?
+
     // 새 카드 한 장을 추가. 반환값은 새로 생긴 행의 id.
     @Insert
     suspend fun insert(card: CardEntity): Long

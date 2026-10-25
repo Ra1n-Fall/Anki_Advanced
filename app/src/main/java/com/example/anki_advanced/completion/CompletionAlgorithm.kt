@@ -24,9 +24,9 @@ private val LEARNING_STEPS_BASE = listOf(
 // LEARNING 스텝을 얼마나 더 빨리 줄일지의 가속 계수.
 private const val STEP_ACCELERATOR = 0.5
 
-// compressionRatio(압축 비율) 값이 너무 극단적으로 튀지 않도록 잡아두는 허용 범위.
+// compressionRatio(압축 비율)의 하한선. 상한은 1.0으로 고정 — 목표 기간이 넉넉해도
+// 간격을 원래보다 더 늘리지는(확장하지는) 않는다.
 private const val RATIO_MIN = 0.01
-private const val RATIO_MAX = 10.0
 
 // 완주 모드 종료 후 간격을 보정할 때 쓰는 파라미터.
 private const val ALPHA = 0.5
@@ -78,12 +78,13 @@ fun calculateCompressionRatio(
     // 윈도우 유효 시간이 0이면(설정 오류 등) 안전하게 압축 없음으로 처리.
     if (maxWindowTime <= 0L) return 1.0
 
-    // ratio = 목표 기간 / 자연스럽게 걸리는 기간
+    // ratio = 목표 기간 / 자연스럽게 걸리는 기간 (목표 기간과 복습 기간의 비율)
     //   ratio < 1.0 → 목표가 더 촉박함 → 간격을 압축해서 더 자주 복습
-    //   ratio > 1.0 → 목표에 여유가 있음 → 간격을 늘려서 덜 자주 복습
+    //   ratio > 1.0 → 목표에 여유가 있음 → 압축하지 않음 (간격을 원래보다 늘리지는 않는다)
     // [문법] .coerceIn(min, max) → 값이 min보다 작으면 min, max보다 크면 max로 잘라내는 범위 제한.
-    //   극단적으로 크거나 작은 비율이 나오는 걸 막는 안전장치.
-    return (targetWindowTime.toDouble() / maxWindowTime).coerceIn(RATIO_MIN, RATIO_MAX)
+    //   상한을 1.0으로 고정해서, 목표 기간이 아무리 넉넉해도 간격이 원래 SM-2 계산값보다
+    //   더 늘어나지는(확장되지는) 않게 막는다.
+    return (targetWindowTime.toDouble() / maxWindowTime).coerceIn(RATIO_MIN, 1.0)
 }
 
 // ── LEARNING 스텝 압축 ───────────────────────────────────────────────────────
@@ -189,7 +190,9 @@ fun applySm2(
 
 // 카드 하나가 "다음 복습까지 얼마나 왔는지"를 0.0~1.5 사이 값으로 계산.
 // progress = (지난 시간) / (원래 간격) — 윈도우 유효 시간 기준으로 계산한다.
+// 예를 들어 30일 주기 카드를 15일째 보고 있으면 progress = 0.5.
 // 1.0이면 정확히 복습 시점 도달, 1.5까지 허용해서 "많이 늦었다"도 표현 가능.
+// recalculateNextReviewAt()이 윈도우나 압축 비율이 바뀔 때 이 값을 구해 진행도를 보존한다.
 fun calculateProgress(card: CardEntity, now: Long, window: AllowedWindow): Double {
     if (card.baseInterval <= 0L || card.lastReviewAt <= 0L) return 0.0
 
@@ -224,17 +227,24 @@ fun recalculateNextReviewAt(
 ): Long {
     val progress = calculateProgress(card, now, oldWindow)
 
-    if (progress >= 1.0) return now
+    if (progress >= 1.0) return now//이미 만기면 즉시 due
+    //progress가 1.0 이상이면 이미 복습 시각이 지난 카드이므로 지금 바로 등장
 
     val newEffectiveInterval = (card.baseInterval * newCompressionRatio).toLong()
+    //카드의 baseInterval(SM-2가 산출한 원본 다음 복습까지의 간격)에 새 compressionRatio를 곱함
+    // 목표 기간이 짧아졌으면 ratio < 1.0이므로 간격도 짧아짐
+
     val newTotalWindowTime   = calculateWindowTime(
         card.lastReviewAt,
         card.lastReviewAt + newEffectiveInterval,
         newWindow
-    )
+    )//lastReviewAt을 새 허용 윈도우 기준으로 환산
+
     val elapsedNewWindowTime = (newTotalWindowTime * progress).toLong()
+    //30일짜리 플랜을 15일째 보고 있었는데 이것을 7일 짜리 플랜으로 바꾼다면 7일짜리를 3.5일째 보고 있는것으로 바꾸는 것
 
     return addWindowTime(card.lastReviewAt, elapsedNewWindowTime, newWindow)
+    //lastReviewAt에서 새 윈도우 기준으로 그만큼 앞으로 이동한 시각이 새 nextReviewAt
 }
 
 // ── 카드 우선순위 분류 ───────────────────────────────────────────────────────
@@ -282,20 +292,25 @@ fun calculateSession(
 ): SessionInfo {
     if (remainingCards <= 0) return SessionInfo(0, 0)
 
+    //1. 현재 시간 기준으로 윈도우 타임이 얼마나 남았는지 계산
     val remainingWindowTime = calculateWindowTime(now, modeEndMs, window)
     if (remainingWindowTime <= 0L) return SessionInfo(remainingCards, 1)
 
+    // 2. 그 윈도우 시간을 세션 간격으로 나누면 몇 번 앉아서 공부할 수 있는지가 나온다.
     // [문법] ceil(x) / floor(x)
     //   ceil은 올림(예: 2.1 → 3), floor는 내림(예: 2.9 → 2). "세션 수는 소수로 나올 수 없으니
     //   최소 그만큼은 필요하다"는 의미에서 requiredSessions는 올림을 쓴다.
+    //   sessionIntervalMs는 ViewModel에서 compressionRatio로부터 자동 산출된 값.
     var requiredSessions = ceil(remainingWindowTime.toDouble() / sessionIntervalMs).toInt()
         .coerceAtLeast(1)
 
-    // 세션을 건너뛴 적이 있으면(며칠 안 들어옴), 남은 세션 수를 줄여서 한 세션에 더 많이 몰아본다.
+    // 3. 세션을 건너뛴 적이 있으면(며칠 안 들어옴), 남은 세션 수를 줄여서 한 세션에 더 많이 몰아본다.
     if (lastSessionTime > 0L && now > lastSessionTime) {
         val missed = floor((now - lastSessionTime).toDouble() / sessionIntervalMs).toInt()
+        //누락 된 시간 계산을 계산해서 얼마만큼의 세션이 누락되었는지 계산
         if (missed > 0) {
             requiredSessions = (requiredSessions - missed).coerceAtLeast(1)
+            //학습 가능한 세션 수에 누락된 세션 수를 빼서 누락된 세션을 제외한 실제 학습가능한(세션 인터벌을 지키면서) 세션 수를 계산
         }
     }
 

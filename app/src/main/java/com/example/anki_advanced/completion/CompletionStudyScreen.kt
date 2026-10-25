@@ -136,8 +136,8 @@ fun CompletionStudyScreenContent(
                 undoStackSize = undoStackSize,
                 isLoading     = isLoading,
                 isFlipped     = isFlipped,
-                doneToday     = displayDone,
-                totalToday    = sessionTarget,
+                doneToday     = displayDone,//기존 프로그레스 바와는 다르게 하루기준 값이 아니라 세션 별 값을 넘김
+                totalToday    = sessionTarget,//;;
                 onShowAnswer  = onShowAnswer,
                 onGrade       = onGrade,
                 onUndo        = onUndo,

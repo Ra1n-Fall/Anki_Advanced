@@ -197,7 +197,7 @@ fun HomeScreen(
         com.example.anki_advanced.completion.CompletionModeSetupDialog(
             deckId = deck.id,
             deckName = deck.name,
-            onConfirm = { deckForCompletionSetup = null },
+            onConfirm = { deckForCompletionSetup = null; viewModel.loadDecks() },
             onDismiss = { deckForCompletionSetup = null }
         )
     }
@@ -305,6 +305,9 @@ fun HomeScreen(
                 onDeactivateModeClick = { deck ->
                     expandedMenuDeckId = null
                     deckToDeactivate = deck
+                },
+                onWeakStudyClick = { deck ->
+                    navController?.navigate("weakStudy/${deck.id}/${deck.name}")
                 },
                 onAddDeckClick = { showAddDeckDialog = true },
                 onGenerateWithAiClick = { navController?.navigate("generateDeck") }
@@ -477,6 +480,7 @@ private fun DeckSection(
     onDeleteClick: (DeckUi) -> Unit,
     onCompletionSetupClick: (DeckUi) -> Unit,  // 완주 모드 설정
     onDeactivateModeClick: (DeckUi) -> Unit,   // 일반 모드 전환
+    onWeakStudyClick: (DeckUi) -> Unit,        // 약점 카드만 모아 공부
     onAddDeckClick: () -> Unit,
     onGenerateWithAiClick: () -> Unit
 ) {
@@ -520,7 +524,8 @@ private fun DeckSection(
                 onSettingsClick        = { onSettingsClick(deck) },
                 onDeleteClick          = { onDeleteClick(deck) },
                 onCompletionSetupClick = { onCompletionSetupClick(deck) },
-                onDeactivateModeClick  = { onDeactivateModeClick(deck) }
+                onDeactivateModeClick  = { onDeactivateModeClick(deck) },
+                onWeakStudyClick       = { onWeakStudyClick(deck) }
             )
         }
 
@@ -546,7 +551,8 @@ private fun DeckCard(
     onSettingsClick: () -> Unit,
     onDeleteClick: () -> Unit,
     onCompletionSetupClick: () -> Unit,
-    onDeactivateModeClick: () -> Unit
+    onDeactivateModeClick: () -> Unit,
+    onWeakStudyClick: () -> Unit
 ) {
     Box(
         modifier = Modifier
@@ -759,6 +765,39 @@ private fun DeckCard(
                 DeckStatChip("신규",   count = deck.newCount,    countColor = HomePrimary,  modifier = Modifier.weight(1f))
                 DeckStatChip("학습 중", count = deck.learnCount,  countColor = HomeTertiary, modifier = Modifier.weight(1f))
                 DeckStatChip("복습",   count = deck.reviewCount, countColor = HomeError,    modifier = Modifier.weight(1f))
+            }
+
+            // ── 약점 카드 행: 약점 카드가 1장 이상일 때만 보여주고, 누르면 약점 카드 세션 시작 ──
+            if (deck.weakCount > 0) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(HomeTertiaryContainer)
+                        .clickable { onWeakStudyClick() }
+                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "약점 ${deck.weakCount}개",
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = HomeTertiary,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Text(
+                        text = "약점 카드 복습",
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = HomeTertiary
+                    )
+                    Icon(
+                        imageVector = Icons.Filled.PlayArrow,
+                        contentDescription = null,
+                        tint = HomeTertiary,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
             }
         }
     }

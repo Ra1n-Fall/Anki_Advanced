@@ -14,7 +14,8 @@ data class DeckUi(
     val reviewCount: Int,                    // 복습 대상(REVIEW) 카드 수
     val lastStudiedAt: Long? = null,         // 마지막으로 공부한 시각(ms). 공부 이력 없으면 null
     val completionModeEndAt: Long? = null,   // 완주 모드 목표 마감 시각. null이면 완주 모드 꺼짐
-    val completionTargetDays: Int? = null    // 완주 모드 목표 기간(일). 덱 배지에 "D-7" 같이 표시할 때 씀
+    val completionTargetDays: Int? = null,   // 완주 모드 목표 기간(일). 덱 배지에 "D-7" 같이 표시할 때 씀
+    val weakCount: Int = 0                   // 약점 카드 수 (WeakCardDetector 기준)
 )
 // [문법] Long? 처럼 타입 뒤에 물음표(?)가 붙으면 "널(null)이 될 수 있는 타입"이라는 뜻.
 //   코틀린은 기본적으로 val x: Long = null 처럼 널을 넣는 게 컴파일 에러다.

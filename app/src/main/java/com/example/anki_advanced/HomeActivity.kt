@@ -81,6 +81,26 @@ class HomeActivity : ComponentActivity() {
                     )
                 }
 
+                // 약점 카드 세션. study 화면과 같은 StudyScreen을 쓰고, 약점 카드만 골라 보여준다.
+                // 진입 경로: navController.navigate("weakStudy/${deck.id}/${deck.name}")
+                composable("weakStudy/{deckId}/{deckName}") { backStackEntry ->
+                    val deckId = backStackEntry.arguments
+                        ?.getString("deckId")
+                        ?.toLong()
+                        ?: return@composable
+
+                    val deckName = backStackEntry.arguments
+                        ?.getString("deckName")
+                        ?: ""
+
+                    StudyScreen(
+                        navController = navController,
+                        deckId = deckId,
+                        deckName = deckName,
+                        weakOnly = true
+                    )
+                }
+
                 // 완주 모드 학습 화면. 진입 경로: navController.navigate("completionStudy/${deck.id}")
                 composable("completionStudy/{deckId}") { backStackEntry ->
                     val deckId = backStackEntry.arguments

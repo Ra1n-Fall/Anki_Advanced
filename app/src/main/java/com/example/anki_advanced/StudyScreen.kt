@@ -51,6 +51,7 @@ fun StudyScreen(
     navController: NavController? = null,
     deckId: Long = -1L,
     deckName: String = "학습",
+    weakOnly: Boolean = false,  // true면 약점 카드만 모아 공부하는 세션
     viewModel: StudyViewModel = viewModel()
 ) {
     val uiState       by viewModel.uiState.collectAsState()
@@ -64,7 +65,7 @@ fun StudyScreen(
     // currentCard가 바뀔 때마다(새 카드로 넘어갈 때마다) 카드가 뒷면으로 뒤집힌 채 시작하지 않게 초기화.
     LaunchedEffect(currentCard) { isFlipped = false }
     // deckId가 처음 정해질 때 딱 한 번 학습 세션을 시작.
-    LaunchedEffect(deckId)      { viewModel.startStudy(deckId) }
+    LaunchedEffect(deckId)      { viewModel.startStudy(deckId, weakOnly) }
 
     StudyScreenContent(
         uiState       = uiState,
@@ -187,7 +188,7 @@ fun StudyScreenContent(
                                     onClick = onUndo,
                                     modifier = Modifier.align(Alignment.CenterEnd)
                                 ) {
-                                    Text("↩ 되돌리기", color = StOnSurfaceVar, fontSize = 25.sp)
+                                    Text("↩ 되돌리기", color = StOnSurfaceVar, fontSize = 20.sp)
                                 }
                             }
                         }
@@ -220,7 +221,7 @@ fun StudyScreenContent(
                                     onClick = onUndo,
                                     modifier = Modifier.align(Alignment.CenterEnd)
                                 ) {
-                                    Text("↩ 되돌리기", color = StOnSurfaceVar, fontSize = 25.sp)
+                                    Text("↩ 되돌리기", color = StOnSurfaceVar, fontSize = 17.sp)
                                 }
                             }
                         }

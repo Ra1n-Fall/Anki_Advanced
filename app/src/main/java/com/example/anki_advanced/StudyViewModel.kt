@@ -3,6 +3,7 @@ package com.example.anki_advanced
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.anki_advanced.weak.findWeakCardIds
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -94,11 +95,32 @@ class StudyViewModel(application: Application) : AndroidViewModel(application) {
 
     private var deckId: Long = -1L
 
+    // ↓↓↓ 약점 카드 세션 전용 상태. weakQueue가 null이면 일반 학습, null이 아니면 약점 카드 세션.
+    // 세션 시작 시점에 약점 카드 id를 한 번 골라두고, 앞에서부터 한 장씩 꺼내 보여준다.
+    // (채점 결과는 일반 학습과 똑같이 SM-2 + 리뷰 로그로 저장된다)
+    private var weakQueue: ArrayDeque<Long>? = null
+    private var weakTotal = 0  // 이번 세션의 약점 카드 수 (진행률 바의 분모)
+    private var weakDone = 0   // 이번 세션에서 채점한 수 (진행률 바의 분자)
+
     // 화면(Screen)의 LaunchedEffect(deckId)에서 호출. deckId가 바뀔 때마다 자동으로
     // 다시 불려서 그 덱의 다음 카드를 보여준다.
-    fun startStudy(deckId: Long) {
+    // weakOnly = true면 약점 카드만 모아 한 번씩 보여주는 세션으로 시작한다.
+    fun startStudy(deckId: Long, weakOnly: Boolean = false) {
         this.deckId = deckId
-        loadNextCard()
+        if (!weakOnly) {
+            weakQueue = null
+            loadNextCard()
+            return
+        }
+        viewModelScope.launch {
+            val ids = withContext(Dispatchers.IO) {
+                findWeakCardIds(db.reviewLogDao().getScoreHistory(deckId))
+            }
+            weakQueue = ArrayDeque(ids)
+            weakTotal = ids.size
+            weakDone = 0
+            loadNextCard()
+        }
     }
 
     // "정답 보기" 버튼 콜백. uiState를 ANSWER로 바꾸면 화면이 알아서 뒷면 + 채점 버튼을 보여준다.
@@ -162,6 +184,7 @@ class StudyViewModel(application: Application) : AndroidViewModel(application) {
                 val last = undoStack.removeLast()
                 undoStack.addLast(last.copy(insertedReviewLogId = logId))
                 _undoStackSize.value = undoStack.size
+                if (weakQueue != null) weakDone++
 
                 loadNextCard()  // 다음 카드 로딩
             } finally {
@@ -187,6 +210,13 @@ class StudyViewModel(application: Application) : AndroidViewModel(application) {
                     // 2) 카드 전체를 채점 전 상태로 되돌림 (status, learningStep, nextReviewAt 전부 포함)
                     db.cardDao().update(undo.prevCard)
                 }
+                // 약점 카드 세션: 지금 화면에 떠 있던(아직 채점 안 한) 카드는 큐에서 이미 꺼낸 상태라,
+                // 큐 맨 앞에 되돌려놔야 되돌린 카드 다음에 다시 나온다.
+                weakQueue?.let { queue ->
+                    val shown = _currentCard.value
+                    if (_uiState.value != StudyUiState.DONE && shown != null) queue.addFirst(shown.id)
+                    weakDone = (weakDone - 1).coerceAtLeast(0)
+                }
                 // 3) 복구한 카드를 loadNextCard()를 거치지 않고 곧바로 화면에 표시.
                 //    loadNextCard()를 거치면 "재노출 시각(nextReviewAt) 조건"에 걸려서
                 //    방금 되돌린 카드가 다시 안 나타날 수 있기 때문.
@@ -207,7 +237,12 @@ class StudyViewModel(application: Application) : AndroidViewModel(application) {
     // applyGrade() 뒤의 loadNextCard(), undoLast() 뒤 각각에서 호출된다.
     private suspend fun refreshProgress() {
         if (deckId == -1L) return  // startStudy()가 아직 호출 전이면 계산할 게 없으니 건너뜀
-        val now        = System.currentTimeMillis()
+        // 약점 카드 세션은 "이번 세션에서 채점한 수 / 약점 카드 수"로 진행률을 표시한다.
+        if (weakQueue != null) {
+            _progress.value = StudyProgress(weakDone, weakTotal)
+            return
+        }
+        val now       = System.currentTimeMillis()
         val todayStart = startOfTodayMillis(now)
         val todayEnd   = todayStart + 24 * 60 * 60 * 1000L  // 오늘 자정 ~ 내일 자정
         // [문법] val (done, total) = withContext(...) { ... to ... }
@@ -246,6 +281,16 @@ class StudyViewModel(application: Application) : AndroidViewModel(application) {
     private fun loadNextCard() {
         viewModelScope.launch {
             val next = withContext(Dispatchers.IO) {
+                // 약점 카드 세션: 우선순위/한도 없이 미리 골라둔 순서대로 꺼낸다.
+                // 그사이 삭제된 카드(getById가 null)는 건너뛴다.
+                weakQueue?.let { queue ->
+                    while (queue.isNotEmpty()) {
+                        val card = db.cardDao().getById(queue.removeFirst())
+                        if (card != null) return@withContext card
+                    }
+                    return@withContext null
+                }
+
                 val now = System.currentTimeMillis()
                 val todayStart = startOfTodayMillis(now)
 

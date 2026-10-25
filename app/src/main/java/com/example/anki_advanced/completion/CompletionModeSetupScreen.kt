@@ -23,7 +23,10 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -135,6 +138,10 @@ fun CompletionModeSetupDialog(
             set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
         }
     }
+
+    // "남은 기간" 옆 드롭다운에서 고를 수 있는 기간 프리셋과, 그 메뉴가 열려있는지 여부.
+    val presetDays = listOf(7, 14, 30, 60, 90)
+    var showPresetMenu by remember { mutableStateOf(false) }
 
     // [문법] remember(key) { derivedStateOf { ... } }
     //   derivedStateOf는 "다른 상태값들을 조합해서 계산해내는 파생 상태"를 만들 때 쓴다.
@@ -351,16 +358,66 @@ fun CompletionModeSetupDialog(
                 ) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
+                        // 남은 기간 + 프리셋 드롭다운
                         Column {
                             Text("남은 기간", fontSize = 11.sp, color = SetupOnSurfaceVariant)
-                            Text(
-                                "${daysRemaining}일",
-                                fontSize = 20.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = SetupPrimary
-                            )
+                            Box {
+                                Row(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .clickable { showPresetMenu = true }
+                                        .padding(end = 2.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        "${daysRemaining}일",
+                                        fontSize = 20.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = SetupPrimary
+                                    )
+                                    Icon(
+                                        Icons.Default.ArrowDropDown,
+                                        contentDescription = "기간 프리셋",
+                                        tint = SetupPrimary,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                }
+                                DropdownMenu(
+                                    expanded = showPresetMenu,
+                                    onDismissRequest = { showPresetMenu = false }
+                                ) {
+                                    presetDays.forEach { days ->
+                                        DropdownMenuItem(
+                                            text = {
+                                                Text(
+                                                    "${days}일",
+                                                    fontWeight = if (daysRemaining == days) FontWeight.Bold else FontWeight.Normal,
+                                                    color = if (daysRemaining == days) SetupPrimary else SetupOnSurface
+                                                )
+                                            },
+                                            onClick = {
+                                                val newDate = Calendar.getInstance().apply {
+                                                    add(Calendar.DAY_OF_YEAR, days)
+                                                }
+                                                selectedDate = endOfDay(
+                                                    newDate.get(Calendar.YEAR),
+                                                    newDate.get(Calendar.MONTH),
+                                                    newDate.get(Calendar.DAY_OF_MONTH)
+                                                )
+                                                displayedMonth = Calendar.getInstance().apply {
+                                                    set(Calendar.YEAR,  newDate.get(Calendar.YEAR))
+                                                    set(Calendar.MONTH, newDate.get(Calendar.MONTH))
+                                                    set(Calendar.DAY_OF_MONTH, 1)
+                                                }
+                                                showPresetMenu = false
+                                            }
+                                        )
+                                    }
+                                }
+                            }
                         }
                         Column(horizontalAlignment = Alignment.End) {
                             Text("종료 예정", fontSize = 11.sp, color = SetupOnSurfaceVariant)

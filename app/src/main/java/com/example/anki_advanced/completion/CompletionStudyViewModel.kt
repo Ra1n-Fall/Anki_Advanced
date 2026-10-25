@@ -54,12 +54,13 @@ class CompletionStudyViewModel(application: Application) : AndroidViewModel(appl
     // 완주 모드는 "오늘 done/total" 대신 "이번 세션 done/target" 개념으로 진행률을 표시한다.
     // 세 값의 역할:
     //
-    // _sessionInfo  : 마감일까지 남은 기간을 세션 간격(sessionIntervalMs)으로 나눠 계산한 세션 목표.
+    // _sessionInfo  : requiredSessions(마감까지 세션이 몇 번 남았는가)와
+    //                 cardsPerSession(그 세션들에 NEW 카드를 균등 분배하면 이번 세션엔 몇 장인가)을 담는다.
     //                 cardsPerSession = ceil(남은 카드 수 / 남은 세션 수).
     //                 채점할 때마다 다시 계산되므로, 프로그레스 바의 "분모"로 직접 쓰면
     //                 진행 중에 분모가 흔들려 보인다 — 그래서 분모는 아래 _sessionTarget을 따로 둔다.
     //
-    // _sessionDone  : 이번 세션에서 지금까지 채점한 횟수. applyGrade()마다 +1, undoLast()마다 -1,
+    // _sessionDone  : 이번 세션에서 지금까지 채점한 총 카드 수. applyGrade()마다 +1, undoLast()마다 -1,
     //                 startStudy()가 호출될 때(새 세션 시작) 0으로 초기화.
     //
     // _sessionTarget: 세션이 시작될 때 딱 한 번 확정되는 "고정된 목표치".
@@ -123,18 +124,19 @@ class CompletionStudyViewModel(application: Application) : AndroidViewModel(appl
                 window = config.toAllowedWindow()           // 허용 시간대 객체 생성
                 compressionRatio = withContext(Dispatchers.IO) {
                     val maxBase = db.completionCardDao().getMaxBaseInterval(deckId) ?: 0L
-                    // maxBase가 0이면(REVIEW 카드가 아직 없음) 비교 기준이 없으므로 ratio=1.0(압축 없음)
+                    // maxBase: 카드들의 복습 기간 중 가장 긴 복습 기간.
+                    // 0이면(REVIEW 카드가 아직 없음) 비교 기준이 없으므로 ratio=1.0(압축 없음)
                     calculateCompressionRatio(config.targetPeriodMs, maxBase, window)
                 }
                 sessionIntervalMs = deriveSessionInterval(compressionRatio)  // ratio로 세션 간격 자동 계산
             }
             _sessionDone.value = 0      // 새 세션이므로 인터랙션 카운터 초기화
-            refreshSessionInfo()        // cardsPerSession 첫 계산
+            refreshSessionInfo()        // 세션당 학습할 카드 수(cardsPerSession)를 계산해 세션 정보에 채워 넣음
             _sessionTarget.value = withContext(Dispatchers.IO) {
                 val now = System.currentTimeMillis()
                 val dueLearning    = db.completionCardDao().countDueLearning(deckId, now)   // 이미 due인 LEARNING
                 val dueReview      = db.completionCardDao().countDueReview(deckId, now)     // 이미 due인 REVIEW
-                val newThisSession = _sessionInfo.value.cardsPerSession                     // 이번 세션 NEW 목표
+                val newThisSession = _sessionInfo.value.cardsPerSession                     // 이번 세션에 새로 볼 NEW 카드 목표 수
                 // 세션 목표 = 지금 당장 봐야 할 카드 + 이번 세션에 새로 볼 NEW 카드.
                 // LEARNING 카드가 세션 도중 반복해서 다시 나오더라도, 분모는 이 값으로 고정된다.
                 (dueLearning + dueReview + newThisSession).coerceAtLeast(1)

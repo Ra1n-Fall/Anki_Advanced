@@ -80,7 +80,25 @@ interface ReviewLogDao {
         ORDER BY dayKey DESC
     """)
     suspend fun getAllStudyDayKeys(): List<Long>
+
+    // 약점 카드 감지용: 이 덱의 채점 기록 전부를 "카드별 → 최신순"으로 가져온다.
+    // 카드별 lapse 수 / 채점 횟수 / 최근 N회 점수는 WeakCardDetector가 이 목록으로 계산한다.
+    // 이미 삭제된 카드의 로그는 cards 테이블에 남아있는 카드만 골라서(IN 서브쿼리) 제외한다.
+    @Query("""
+        SELECT cardId, score, isNewAtReview FROM review_logs
+        WHERE deckId = :deckId
+          AND cardId IN (SELECT id FROM cards WHERE deckId = :deckId)
+        ORDER BY cardId, reviewedAt DESC
+    """)
+    suspend fun getScoreHistory(deckId: Long): List<ReviewScoreRow>
 }
+
+// getScoreHistory() 쿼리 결과 한 줄을 담는 그릇.
+data class ReviewScoreRow(
+    val cardId: Long,
+    val score: Int,
+    val isNewAtReview: Int
+)
 
 // countByScoreToday() 쿼리 결과 한 줄을 담는 그릇.
 // [문법] Room은 SELECT 결과의 컬럼 이름(score, cnt)과 이 data class의 프로퍼티 이름을

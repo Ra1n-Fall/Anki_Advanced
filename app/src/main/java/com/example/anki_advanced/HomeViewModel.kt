@@ -4,6 +4,7 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.anki_advanced.completion.CompletionModeConfigEntity
+import com.example.anki_advanced.weak.findWeakCardIds
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -88,6 +89,9 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
                 val completionConfig = withContext(Dispatchers.IO) {
                     db.completionModeDao().getConfig(e.id)
                 }
+                val weakCount = withContext(Dispatchers.IO) {
+                    findWeakCardIds(db.reviewLogDao().getScoreHistory(e.id)).size // 이 덱의 약점 카드 수
+                }
 
                 totalStudied += studied                          // 전체 완료 수에 누적
                 totalDue += newCount + learnCount + reviewCount  // 전체 남은 수에 누적
@@ -109,7 +113,8 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
                     //   null이면 전체가 그냥 null이 됨. it은 "null 아님이 확인된 activeConfig"를 가리킴.
                     completionTargetDays = activeConfig?.let {
                         (it.targetPeriodMs / 86_400_000L).toInt().coerceAtLeast(1)
-                    }
+                    },
+                    weakCount = weakCount
                 )
                 // map 블록의 마지막 식(DeckUi(...))이 이 덱 하나의 변환 결과가 되고,
                 // map은 전체 결과를 모아 List<DeckUi>로 돌려준다.
