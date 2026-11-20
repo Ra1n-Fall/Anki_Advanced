@@ -68,6 +68,8 @@ fun CompletionStudyScreen(
     //   일반 함수 호출과 달리, 화면이 매번 다시 그려져도 key가 그대로면 다시 실행되지 않는다.
     //   아래 줄: currentCard가 바뀔 때마다(=새 카드로 넘어갈 때마다) 카드 뒤집힘 상태를 초기화.
     LaunchedEffect(currentCard) { isFlipped = false }
+    // 채점 버튼 위에 보여줄 실제 다음 간격(압축 비율 반영). 카드나 화면 상태가 바뀔 때 다시 계산한다.
+    val gradeHints = remember(currentCard, uiState) { viewModel.gradeHints(currentCard) }
     // 아래 줄: deckId가 처음 정해질 때 한 번 학습 세션을 시작.
     LaunchedEffect(deckId)      { viewModel.startStudy(deckId) }
 
@@ -82,6 +84,7 @@ fun CompletionStudyScreen(
         sessionTarget  = sessionTarget,
         modeEndAt      = config?.modeEndAt ?: 0L,
         onShowAnswer   = { isFlipped = true; viewModel.showAnswer() },
+        gradeHints     = gradeHints,
         onGrade        = { viewModel.applyGrade(it) },
         onUndo         = { viewModel.undoLast() },
         onBack         = { navController?.popBackStack() }
@@ -105,6 +108,7 @@ fun CompletionStudyScreenContent(
     sessionDone: Int,
     sessionTarget: Int,
     modeEndAt: Long,
+    gradeHints: List<String> = emptyList(),  // 버튼별 다음 간격(다시·어려움·좋음·쉬움)
     onShowAnswer: () -> Unit,
     onGrade: (Int) -> Unit,
     onUndo: () -> Unit,
@@ -138,6 +142,7 @@ fun CompletionStudyScreenContent(
                 isFlipped     = isFlipped,
                 doneToday     = displayDone,//기존 프로그레스 바와는 다르게 하루기준 값이 아니라 세션 별 값을 넘김
                 totalToday    = sessionTarget,//;;
+                gradeHints    = gradeHints,
                 onShowAnswer  = onShowAnswer,
                 onGrade       = onGrade,
                 onUndo        = onUndo,

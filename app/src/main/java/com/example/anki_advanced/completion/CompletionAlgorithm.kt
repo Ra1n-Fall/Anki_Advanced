@@ -120,7 +120,8 @@ fun applySm2(
     score: Int,
     compressionRatio: Double,
     window: AllowedWindow,
-    now: Long
+    now: Long,
+    jitter: Double = Random.nextDouble(0.9, 1.1)  // ±10% 무작위 흔들림 (기본값: 매번 새로 뽑음)
 ): CompletionSm2Result {
     val q  = sm2Q(score)  // 채점 버튼(0~3)을 SM-2가 쓰는 품질 점수(q)로 변환
     var ef = card.easeFactor
@@ -172,7 +173,9 @@ fun applySm2(
 
     // baseInterval(ms) 계산: 계산된 일수에 ±10% 무작위 흔들림(jitter)을 한 번만 곱해준다.
     // [문법] Random.nextDouble(0.9, 1.1) → 0.9 이상 1.1 미만의 무작위 실수 하나를 뽑는다.
-    val baseInterval = (intervalDays * MS_PER_DAY * Random.nextDouble(0.9, 1.1)).toLong()
+    //   jitter를 바깥에서 넘기면 그 값을 쓴다. 학습 화면은 카드마다 jitter를 미리 한 번 뽑아 두고
+    //   버튼 표시와 실제 채점에 같은 값을 넘겨, 버튼에 보이는 간격과 실제 결과가 같아지게 한다.
+    val baseInterval = (intervalDays * MS_PER_DAY * jitter).toLong()
 
     // 실제로 화면/DB에 쓰이는 간격은 여기에 압축 비율까지 곱한 값.
     val effectiveInterval = (baseInterval * compressionRatio).toLong()

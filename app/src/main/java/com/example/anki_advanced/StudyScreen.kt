@@ -42,6 +42,8 @@ private val StAgain         = Color(0xFFE91E63)
 private val StHard          = Color(0xFFFF9800)
 private val StGood          = Color(0xFF2196F3)
 private val StEasy          = Color(0xFF4CAF50)
+private val StWeak          = Color(0xFF983772)  // 약점 배지 글자 (홈 화면 약점 행과 같은 분홍)
+private val StWeakContainer = Color(0xFFFFD8EE)  // 약점 배지 배경
 
 // ── ViewModel과 연결되는 "진입점" 컴포저블 ────────────────────────────────────
 // 이 함수만 ViewModel을 알고 있고, 실제 화면을 그리는 StudyScreenContent는
@@ -60,6 +62,10 @@ fun StudyScreen(
     val undoStackSize by viewModel.undoStackSize.collectAsState()
     val isLoading     by viewModel.isLoading.collectAsState()
     val progress      by viewModel.progress.collectAsState()  // 오늘 완료 수 / 전체 카드 수
+    val isWeak        by viewModel.isCurrentWeak.collectAsState()  // 지금 카드가 약점 카드인지
+
+    // 채점 버튼 위에 보여줄 실제 다음 간격. 카드가 바뀔 때마다 다시 계산한다.
+    val gradeHints = remember(currentCard, uiState) { viewModel.gradeHints(currentCard) }
 
     var isFlipped by remember { mutableStateOf(false) }
     // currentCard가 바뀔 때마다(새 카드로 넘어갈 때마다) 카드가 뒷면으로 뒤집힌 채 시작하지 않게 초기화.
@@ -70,11 +76,13 @@ fun StudyScreen(
     StudyScreenContent(
         uiState       = uiState,
         currentCard   = currentCard,
+        isWeak        = isWeak,         // true면 카드 우상단에 "약점" 배지
         undoStackSize = undoStackSize,  // 되돌리기 버튼 표시 여부 결정용
         isLoading     = isLoading,
         isFlipped     = isFlipped,
         doneToday     = progress.done,   // 오늘 완료한 채점 수
         totalToday    = progress.total,  // 완료 + 남은 카드 수 (학습 중 계속 갱신됨)
+        gradeHints    = gradeHints,
         onShowAnswer  = { isFlipped = true; viewModel.showAnswer() },
         onGrade       = { viewModel.applyGrade(it) },
         onUndo        = { viewModel.undoLast() },
@@ -107,7 +115,9 @@ fun StudyScreenContent(
     onShowAnswer: () -> Unit,
     onGrade: (Int) -> Unit,
     onUndo: () -> Unit,
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    isWeak: Boolean = false,  // 약점 카드면 true (완주 모드 화면처럼 안 넘기는 곳은 기본값 false)
+    gradeHints: List<String> = emptyList()  // 버튼별 다음 간격(다시·어려움·좋음·쉬움). 비어 있으면 표시 안 함
 ) {
     // [문법] val rotation by animateFloatAsState(targetValue = ..., animationSpec = tween(400))
     //   "목표값이 바뀌면 그 값까지 애니메이션으로 부드럽게 이동하는 Float 상태"를 만들어주는 함수.
@@ -162,10 +172,11 @@ fun StudyScreenContent(
                         .graphicsLayer { rotationY = rotation; cameraDistance = 12f * density }
                 ) {
                     if (rotation <= 90f) {
-                        FrontFace(card = currentCard)   // 0°~90° 구간: 앞면 표시
-                    } else {                            // 90°~180° 구간: 뒷면 표시
+                        FrontFace(card = currentCard, isWeak = isWeak)   // 0°~90° 구간: 앞면 표시
+                    } else {                                             // 90°~180° 구간: 뒷면 표시
                         BackFace(
                             card = currentCard,
+                            isWeak = isWeak,
                             // 뒷면은 부모가 이미 180도 돌아간 상태로 그려지므로, 여기서 다시 180도를
                             // 더 돌려 "거울에 비친 것처럼 글자가 뒤집혀 보이는" 문제를 상쇄시킨다.
                             modifier = Modifier.graphicsLayer { rotationY = 180f }
@@ -227,6 +238,7 @@ fun StudyScreenContent(
                         }
                         GradeButtonRow(
                             isLoading = isLoading,
+                            hints = gradeHints,
                             onGrade = onGrade,
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -326,7 +338,7 @@ private fun StudyProgressBar(doneToday: Int, totalToday: Int, modifier: Modifier
 
 // ── 카드 앞면 ──
 @Composable
-private fun FrontFace(card: CardEntity?, modifier: Modifier = Modifier) {
+private fun FrontFace(card: CardEntity?, isWeak: Boolean, modifier: Modifier = Modifier) {
     Card(
         modifier = modifier.fillMaxSize(),
         shape = RoundedCornerShape(32.dp),
@@ -362,13 +374,28 @@ private fun FrontFace(card: CardEntity?, modifier: Modifier = Modifier) {
                     textAlign = TextAlign.Center, lineHeight = 48.sp
                 )
             }
+            if (isWeak) WeakBadge(Modifier.align(Alignment.TopEnd).padding(20.dp))
         }
     }
 }
 
+// ── 카드 우상단의 "약점" 배지 (카드 내용과 별개로 겹쳐 그림) ──
+@Composable
+private fun WeakBadge(modifier: Modifier = Modifier) {
+    Text(
+        text = "약점",
+        color = StWeak,
+        fontSize = 12.sp,
+        fontWeight = FontWeight.Bold,
+        modifier = modifier
+            .background(StWeakContainer, CircleShape)
+            .padding(horizontal = 12.dp, vertical = 4.dp)
+    )
+}
+
 // ── 카드 뒷면 ──
 @Composable
-private fun BackFace(card: CardEntity?, modifier: Modifier = Modifier) {
+private fun BackFace(card: CardEntity?, isWeak: Boolean, modifier: Modifier = Modifier) {
     Card(
         modifier = modifier.fillMaxSize(),
         shape = RoundedCornerShape(32.dp),
@@ -403,6 +430,7 @@ private fun BackFace(card: CardEntity?, modifier: Modifier = Modifier) {
                     fontSize = 22.sp, fontWeight = FontWeight.Medium,
                     textAlign = TextAlign.Center, lineHeight = 30.sp)
             }
+            if (isWeak) WeakBadge(Modifier.align(Alignment.TopEnd).padding(20.dp))
         }
     }
 }
@@ -413,13 +441,19 @@ private fun BackFace(card: CardEntity?, modifier: Modifier = Modifier) {
 // 이 컴포저블들은 ViewModel을 전혀 모르고 "콜백 람다"만 받아서 위로 전달하기 때문에
 // ViewModel 없이도 Preview로 미리보기가 가능하다.
 @Composable
-private fun GradeButtonRow(isLoading: Boolean, onGrade: (Int) -> Unit, modifier: Modifier = Modifier) {
+private fun GradeButtonRow(
+    isLoading: Boolean, onGrade: (Int) -> Unit, modifier: Modifier = Modifier,
+    hints: List<String> = emptyList()
+) {
+    // hints는 ViewModel이 지금 카드 상태로 계산한 실제 다음 간격. 4개가 아니면(미리보기 등) 빈칸으로 둔다.
+    // [문법] getOrElse(i) { "" } → i번째 값이 없으면 { } 안의 기본값을 쓴다.
+    fun hint(i: Int) = hints.getOrElse(i) { "" }
     // weight(1f)를 넷 다 줘서 Row 너비를 4등분, 각 버튼이 똑같은 폭을 차지하게 한다.
     Row(modifier = modifier, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        GradeButton("다시",   "1분", StAgain, isLoading, Modifier.weight(1f)) { onGrade(0) }
-        GradeButton("어려움", "2일", StHard,  isLoading, Modifier.weight(1f)) { onGrade(1) }
-        GradeButton("좋음",   "4일", StGood,  isLoading, Modifier.weight(1f)) { onGrade(2) }
-        GradeButton("쉬움",   "7일", StEasy,  isLoading, Modifier.weight(1f)) { onGrade(3) }
+        GradeButton("다시",   hint(0), StAgain, isLoading, Modifier.weight(1f)) { onGrade(0) }
+        GradeButton("어려움", hint(1), StHard,  isLoading, Modifier.weight(1f)) { onGrade(1) }
+        GradeButton("좋음",   hint(2), StGood,  isLoading, Modifier.weight(1f)) { onGrade(2) }
+        GradeButton("쉬움",   hint(3), StEasy,  isLoading, Modifier.weight(1f)) { onGrade(3) }
     }
 }
 

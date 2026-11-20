@@ -77,6 +77,10 @@ fun buildCardStats(rows: List<ReviewScoreRow>): List<CardReviewStats> =
         )
     }
 
+// 카드 한 장의 채점 기록(최신순)만으로 약점인지 판정. 기록이 없으면 false.
+fun isWeakCard(cardRows: List<ReviewScoreRow>): Boolean =
+    buildCardStats(cardRows).singleOrNull()?.let { isWeakCard(it) } ?: false
+
 // 약점 카드 id 목록. 점수가 높은(더 약한) 카드부터 정렬한다.
 fun findWeakCardIds(rows: List<ReviewScoreRow>): List<Long> =
     buildCardStats(rows)

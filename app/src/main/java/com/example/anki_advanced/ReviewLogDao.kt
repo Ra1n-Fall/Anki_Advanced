@@ -91,6 +91,14 @@ interface ReviewLogDao {
         ORDER BY cardId, reviewedAt DESC
     """)
     suspend fun getScoreHistory(deckId: Long): List<ReviewScoreRow>
+
+    // 카드 한 장의 채점 기록(최신순). 학습 화면에서 지금 카드가 약점인지 판정할 때 사용.
+    @Query("""
+        SELECT cardId, score, isNewAtReview FROM review_logs
+        WHERE cardId = :cardId
+        ORDER BY reviewedAt DESC
+    """)
+    suspend fun getScoreHistoryForCard(cardId: Long): List<ReviewScoreRow>
 }
 
 // getScoreHistory() 쿼리 결과 한 줄을 담는 그릇.

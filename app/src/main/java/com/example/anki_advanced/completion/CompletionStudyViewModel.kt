@@ -10,7 +10,9 @@ import com.example.anki_advanced.CARD_REVIEW
 import com.example.anki_advanced.CardEntity
 import com.example.anki_advanced.ReviewLogEntity
 import com.example.anki_advanced.StudyUiState
+import com.example.anki_advanced.formatGradeInterval
 import com.example.anki_advanced.sm2Q
+import kotlin.random.Random
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -90,6 +92,11 @@ class CompletionStudyViewModel(application: Application) : AndroidViewModel(appl
     // 계산된 복습 간격 전체에 곱해진다.
     // ratio < 1.0 → 간격을 압축(더 자주 복습), ratio > 1.0 → 간격을 확장(덜 자주 복습).
     private var compressionRatio = 1.0
+
+    // 지금 화면에 떠 있는 카드에 쓸 ±10% 흔들림(jitter). 카드가 바뀔 때마다 새로 뽑는다.
+    // 채점 버튼 표시(gradeHints)와 실제 채점(applyGrade)이 같은 값을 써야 버튼에 보이는 간격과
+    // 실제로 정해지는 간격이 같아진다.
+    private var jitter = Random.nextDouble(0.9, 1.1)
 
     // compressionRatio로부터 자동으로 정해지는 "세션 하나의 길이".
     // = 86,400,000ms(하루) × ratio, 다만 최소 30분 ~ 최대 1일 범위로 고정.
@@ -222,6 +229,7 @@ class CompletionStudyViewModel(application: Application) : AndroidViewModel(appl
                 }
                 _sessionDone.value = (_sessionDone.value - 1).coerceAtLeast(0)  // 세션 인터랙션 수 되돌리기
                 refreshSessionInfo()                    // 남은 카드 수 변화를 반영
+                jitter = Random.nextDouble(0.9, 1.1)
                 _currentCard.value = undo.prevCard
                 _uiState.value = StudyUiState.QUESTION
             } finally {
@@ -339,6 +347,7 @@ class CompletionStudyViewModel(application: Application) : AndroidViewModel(appl
             if (next == null) {
                 _uiState.value = StudyUiState.DONE   // 4순위까지 없으면 이번 세션은 여기서 끝
             } else {
+                jitter = Random.nextDouble(0.9, 1.1)
                 _currentCard.value = next
                 _uiState.value = StudyUiState.QUESTION
             }
@@ -369,6 +378,15 @@ class CompletionStudyViewModel(application: Application) : AndroidViewModel(appl
 
     // ── 카드 상태 결정 (채점 후 카드가 어떻게 바뀌는지 계산) ────────────────────
 
+    // 채점 버튼 4개(다시·어려움·좋음·쉬움)에 표시할 "다음 등장까지 남은 시간".
+    // 실제 채점과 같은 resolveUpdatedCard()·같은 jitter로 계산하므로 버튼 표시와 결과가 일치한다.
+    // 완주 모드는 압축 비율과 허용 시간대가 반영된 실제 시각(nextReviewAt)까지의 시간을 보여준다.
+    fun gradeHints(card: CardEntity?): List<String> {
+        if (card == null) return emptyList()
+        val now = System.currentTimeMillis()
+        return (0..3).map { score -> formatGradeInterval(resolveUpdatedCard(card, score, now).nextReviewAt - now) }
+    }
+
     // 카드의 현재 상태(status)에 따라 LEARNING 처리와 REVIEW 처리로 나눠 위임.
     private fun resolveUpdatedCard(card: CardEntity, score: Int, now: Long): CardEntity {
         return when (card.status) {
@@ -396,7 +414,7 @@ class CompletionStudyViewModel(application: Application) : AndroidViewModel(appl
             2 -> { // Good: 다음 스텝으로 진행. 마지막 스텝을 넘어서면 REVIEW로 졸업
                 val nextStep = card.learningStep + 1
                 if (nextStep >= steps.size) {           // 모든 스텝을 통과했으므로 REVIEW로 승격
-                    val sm2 = applySm2(card, score, compressionRatio, window, now)
+                    val sm2 = applySm2(card, score, compressionRatio, window, now, jitter)
                     card.copy(status = CARD_REVIEW, state = score, learningStep = 0,
                         repetition = sm2.repetition, baseInterval = sm2.baseInterval,
                         easeFactor = sm2.easeFactor, nextReviewAt = sm2.nextReviewAt,
@@ -407,7 +425,7 @@ class CompletionStudyViewModel(application: Application) : AndroidViewModel(appl
                 }
             }
             else -> { // Easy: 스텝을 전부 건너뛰고 곧바로 REVIEW로 졸업
-                val sm2 = applySm2(card, score, compressionRatio, window, now)
+                val sm2 = applySm2(card, score, compressionRatio, window, now, jitter)
                 card.copy(status = CARD_REVIEW, state = score, learningStep = 0,
                     repetition = sm2.repetition, baseInterval = sm2.baseInterval,
                     easeFactor = sm2.easeFactor, nextReviewAt = sm2.nextReviewAt,
@@ -422,12 +440,18 @@ class CompletionStudyViewModel(application: Application) : AndroidViewModel(appl
     private fun resolveUpdatedReviewCard(card: CardEntity, score: Int, now: Long): CardEntity {
         return when (score) {
             0 -> { // Again: LEARNING으로 강등, 압축된 첫 스텝 간격 후 재등장
+                // SM-2 q=0 규칙(반복 0, 간격 1일, easeFactor −0.20)을 먼저 반영해야
+                // 재학습 후 졸업할 때 예전 간격이 그대로 이어지지 않는다.
+                // 다음 노출 시각은 SM-2 결과가 아니라 압축된 첫 스텝 뒤로 덮어쓴다.
                 val steps = getCompressedSteps(compressionRatio)
+                val sm2 = applySm2(card, score, compressionRatio, window, now, jitter)
                 card.copy(status = CARD_LEARNING, state = score, learningStep = 0,
+                    repetition = sm2.repetition, baseInterval = sm2.baseInterval,
+                    easeFactor = sm2.easeFactor,
                     nextReviewAt = now + steps[0], lastReviewAt = now)
             }
             else -> { // Hard·Good·Easy: compressionRatio·window를 반영한 SM-2로 다음 복습 시각 계산
-                val sm2 = applySm2(card, score, compressionRatio, window, now)
+                val sm2 = applySm2(card, score, compressionRatio, window, now, jitter)
                 card.copy(status = CARD_REVIEW, state = score, learningStep = 0,
                     repetition = sm2.repetition, baseInterval = sm2.baseInterval,
                     easeFactor = sm2.easeFactor, nextReviewAt = sm2.nextReviewAt,

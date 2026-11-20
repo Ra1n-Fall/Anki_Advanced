@@ -4,6 +4,7 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.anki_advanced.weak.findWeakCardIds
+import com.example.anki_advanced.weak.isWeakCard
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -77,6 +78,10 @@ class StudyViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _currentCard = MutableStateFlow<CardEntity?>(null)
     val currentCard: StateFlow<CardEntity?> = _currentCard.asStateFlow()
+
+    // 지금 보여주는 카드가 약점 카드인지. true면 카드 우상단에 "약점" 배지를 띄운다.
+    private val _isCurrentWeak = MutableStateFlow(false)
+    val isCurrentWeak: StateFlow<Boolean> = _isCurrentWeak.asStateFlow()
 
     // undoStack 자체는 StateFlow가 아니라서(그냥 평범한 자료구조), "크기"만 별도 StateFlow로 공개.
     // Screen은 이 값이 0보다 클 때만 되돌리기 버튼을 보여준다.
@@ -221,6 +226,7 @@ class StudyViewModel(application: Application) : AndroidViewModel(application) {
                 //    loadNextCard()를 거치면 "재노출 시각(nextReviewAt) 조건"에 걸려서
                 //    방금 되돌린 카드가 다시 안 나타날 수 있기 때문.
                 refreshProgress()  // 로그 삭제로 인해 바뀐 진행률을 다시 계산
+                _isCurrentWeak.value = checkWeak(undo.prevCard)
                 _currentCard.value = undo.prevCard
                 _uiState.value = StudyUiState.QUESTION
             } finally {
@@ -330,9 +336,31 @@ class StudyViewModel(application: Application) : AndroidViewModel(application) {
             if (next == null) {
                 _uiState.value = StudyUiState.DONE   // 더 볼 카드가 없음 → 완료 화면
             } else {
+                _isCurrentWeak.value = checkWeak(next)  // 카드를 띄우기 전에 배지 여부부터 정해둔다
                 _currentCard.value = next
                 _uiState.value = StudyUiState.QUESTION  // 새 카드 → 질문(앞면) 상태로
             }
+        }
+    }
+
+    // 카드가 약점 카드인지 판정. 약점 카드 세션이면 전부 약점 카드라 DB를 볼 필요가 없다.
+    private suspend fun checkWeak(card: CardEntity): Boolean {
+        if (weakQueue != null) return true
+        return withContext(Dispatchers.IO) {
+            isWeakCard(db.reviewLogDao().getScoreHistoryForCard(card.id))
+        }
+    }
+
+    // 채점 버튼 4개(다시·어려움·좋음·쉬움)에 표시할 "다음 등장까지 남은 시간".
+    // 실제 채점과 같은 resolveUpdatedCard()로 미리 계산하므로, 버튼에 보이는 값과 눌렀을 때의
+    // 결과가 항상 일치한다. REVIEW로 가는 경우는 자정 기준 날짜 계산이라 intervalDays를 그대로 쓴다.
+    fun gradeHints(card: CardEntity?): List<String> {
+        if (card == null) return emptyList()
+        val now = System.currentTimeMillis()
+        return (0..3).map { score ->
+            val next = resolveUpdatedCard(card, score, now)
+            if (next.status == CARD_REVIEW) "${next.intervalDays}일"
+            else formatGradeInterval(next.nextReviewAt - now)
         }
     }
 
@@ -387,8 +415,13 @@ class StudyViewModel(application: Application) : AndroidViewModel(application) {
     // score 1/2/3      → SM-2 계산 후 REVIEW 유지 (난이도별로 간격/난이도 계수가 다르게 갱신됨)
     private fun resolveUpdatedReviewCard(card: CardEntity, score: Int, now: Long): CardEntity {
         return when (score) {
-            0 -> // Again: REVIEW → LEARNING 강등
-                card.copy(status = CARD_LEARNING, state = score, learningStep = 0, nextReviewAt = now + LEARNING_STEPS_MS[0])
+            0 -> { // Again: REVIEW → LEARNING 강등
+                // SM-2 q=0 규칙으로 반복 횟수 0, 간격 1일, easeFactor −0.20을 먼저 반영한다.
+                // 이걸 안 하면 재학습 후 졸업할 때 예전 간격에 ef가 곱해져 간격이 오히려 길어진다.
+                // 다음 노출 시각은 SM-2 날짜가 아니라 재학습 첫 스텝(1분) 뒤로 덮어쓴다.
+                val sm2 = applySm2(card, score)
+                card.copy(status = CARD_LEARNING, state = score, learningStep = 0, repetition = sm2.repetition, intervalDays = sm2.intervalDays, easeFactor = sm2.easeFactor, nextReviewAt = now + LEARNING_STEPS_MS[0])
+            }
             else -> { // Hard/Good/Easy: SM-2 계산 후 REVIEW 유지
                 val sm2 = applySm2(card, score)
                 card.copy(status = CARD_REVIEW, state = score, learningStep = 0, repetition = sm2.repetition, intervalDays = sm2.intervalDays, easeFactor = sm2.easeFactor, nextReviewAt = sm2.nextReviewAt)
