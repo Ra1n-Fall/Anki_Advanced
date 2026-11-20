@@ -42,7 +42,11 @@ fun decodeAndCompressImage(context: Context, uri: Uri): Pair<Bitmap, ByteArray>?
     //   Uri가 가리키는 파일을 InputStream으로 여는데, 애초에 열 수 없으면(파일이 없거나
     //   권한이 없으면) null이 오므로 그 자리에서 함수 전체를 중단(return null)한다.
     //   use { }는 스트림을 다 쓰고 나면 자동으로 close()해주는 확장 함수.
-    resolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) } ?: return null
+    //   주의: inJustDecodeBounds = true일 때 decodeStream()은 원래 null을 돌려준다(크기만 bounds에 채움).
+    //   그래서 결과값이 아니라 스트림이 열렸는지, bounds에 크기가 채워졌는지로 성공 여부를 판단한다.
+    val boundsStream = resolver.openInputStream(uri) ?: return null
+    boundsStream.use { BitmapFactory.decodeStream(it, null, bounds) }
+    if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
 
     // 2단계: 1단계에서 알아낸 원본 크기를 보고 "몇 배로 축소해서 디코딩할지" 계산.
     val sampleSize = calculateInSampleSize(bounds.outWidth, bounds.outHeight, MAX_DIMENSION)
