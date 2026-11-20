@@ -13,6 +13,25 @@ Anki의 SM-2 간격 반복 알고리즘은 그대로 유지하면서, Anki를 �
 
 모든 데이터는 기기 안(Room DB)에 저장되며, 인터넷은 AI 카드 생성에만 사용합니다.
 
+## 화면 구성
+
+| 화면 | 할 수 있는 일 |
+|---|---|
+| 홈 | 오늘 학습 진행률, 덱 목록(신규 · 학습 중 · 복습 카드 수, 약점 N개, 완주 모드 배지와 만기일), 연속 학습 일수, 총 암기한 카드 수, 덱 추가, AI로 덱 자동 생성 |
+| 덱 메뉴 | 카드 관리, 설정(하루 새 카드 · 복습 한도), 완주 모드 설정/수정, 일반 모드로 전환, 덱 삭제 |
+| 카드 관리 | 카드 추가 · 수정 · 삭제, 앞면 · 뒷면 · 태그 검색 |
+| 학습 | 카드 뒤집기, 4단계 채점(버튼마다 실제 다음 간격 표시), 되돌리기, 진행률 표시, 약점 배지 |
+| 약점 카드 복습 | 약점 카드만 점수 높은 순으로 모아 학습 |
+| 완주 모드 설정 | 캘린더로 목표 날짜 선택, 기간 프리셋(7 · 14 · 30 · 60 · 90일), 종료 예정일과 하루 학습량 미리보기 |
+| AI로 덱 만들기 | 제목 · 내용 · 사진(촬영 또는 갤러리), 카드 수(1~30), 카드 언어, 카드 유형과 세부 형태 선택, 생성 결과 미리보기 · 제외 · 덱 이름 수정 후 저장 |
+| 퓨샷 예시 설정 | 기본 유형별 내 예시 추가, 사용자 지정 유형 만들기 |
+
+### 덱 · 카드 관리
+
+| 덱 추가 | 덱 메뉴 | 카드 관리 |
+|---|---|---|
+| ![덱 추가](images/20_new_deck.png) | ![덱 메뉴](images/21_deck_menu.png) | ![카드 관리](images/22_card_manage.png) |
+
 ---
 
 ## 주요 기능
@@ -58,7 +77,8 @@ ratio    = clamp( W(목표 기간) / W(덱의 최대 REVIEW 간격), 0.01, 1.0 )
 - ±10% 무작위 흔들림으로 같은 날 배운 카드가 같은 날에 몰리지 않습니다.
 - 학습 단계(1분 · 10분)도 `ratio × 0.5`만큼 줄이되 최소 10초 · 1분은 보장합니다.
 - 밀린 카드는 밀린 비율로 우선순위(URGENT · HIGH · NORMAL)를 매기고, 세션당 카드 수는 `⌈남은 카드 ÷ 남은 세션⌉`입니다.
-- 기간을 바꾸면 카드별 진행도는 유지한 채 다음 복습 시각만 다시 계산합니다.
+- 기간을 바꾸면 카드별 진행도(지난 시간 ÷ 원래 간격)는 유지한 채 다음 복습 시각만 다시 계산합니다. 예를 들어 30일 계획의 15일째는 7일 계획의 3.5일째가 됩니다.
+- 덱 메뉴의 **일반 모드로 전환**으로 언제든 완주 모드를 끌 수 있고, 그때까지의 학습 일정은 유지됩니다.
 - 모드가 끝나면 학습 밀도와 정답률로 간격을 보정해 일반 모드로 돌아갑니다(α = 0.5, β = 0.2).
 
 | 덱 배지 | 완주 모드 메뉴 | 목표 날짜 선택 | 설정 완료 | 완주 모드 학습 |
@@ -88,6 +108,8 @@ ratio    = clamp( W(목표 기간) / W(덱의 최대 REVIEW 간격), 0.01, 1.0 )
 | 연표 | 연도 / 사건 순서 | ![연표](images/16_type_timeline.png) |
 | 사용자 지정 | 사용자가 정한 이름 · 지침 · 예시 | 퓨샷 예시 설정 화면에서 추가 |
 
+- 카드 언어(예: 한국어)와 카드 수(1~30장)를 정할 수 있고, 덱 제목을 비워 두면 내용에 맞춰 자동으로 붙습니다.
+- 유형을 직접 고르면 그 유형의 세부 형태를 하나 또는 둘 다 골라 만들 수 있습니다.
 - 기본 유형마다 내 예시를 추가하거나, 새 유형(이름 · 작성 지침 · 예시)을 직접 만들 수 있습니다.
 - Gemini 서버가 혼잡(503 · 429)하면 5초 · 15초 · 45초 간격으로 자동 재시도합니다.
 - API 키는 사용자가 직접 입력하며 기기 안에 AES-256으로 암호화해 저장합니다(EncryptedSharedPreferences).
@@ -143,16 +165,51 @@ Compose 화면 ──▶ ViewModel (StateFlow) ──▶ Room DB (cards · decks
 | `weak/WeakCardDetector.kt` | 약점 점수 계산과 판정 |
 | `Appdatabase.kt` | Room DB 싱글턴과 마이그레이션 |
 
+## 데이터베이스
+
+Room DB(`anki.db`, 버전 3)는 테이블 4개로 구성됩니다.
+
+| 테이블 | 주요 컬럼 | 용도 |
+|---|---|---|
+| `cards` | deckId, front, back, tags, status(NEW · LEARNING · REVIEW), state(마지막 채점), repetition, intervalDays, easeFactor, nextReviewAt, learningStep, baseInterval, lastReviewAt, cardType | 카드 내용과 SM-2 · 완주 모드 상태 |
+| `decks` | name, dailyNewLimit(기본 10), dailyReviewLimit(기본 50) | 덱 목록과 하루 한도 |
+| `review_logs` | deckId, cardId, score(0~3), sm2Q(0 · 3 · 4 · 5), reviewedAt, isNewAtReview | 채점 기록 — 진행률, 연속 학습, 약점 판정에 공통으로 사용 |
+| `completion_mode_configs` | deckId, targetPeriodMs, windowStartHour, windowEndHour, modeStartAt, sessionIntervalMs, isActive | 덱별 완주 모드 설정 |
+
+## 프로젝트 구조
+
+```
+app/src/main/java/com/example/anki_advanced/
+├── HomeActivity.kt, HomeScreen.kt, HomeViewModel.kt     홈 화면과 화면 이동(Navigation)
+├── StudyScreen.kt, StudyViewModel.kt                     일반 학습 · 약점 카드 복습, SM-2 계산
+├── DeckManageScreen.kt, DeckManageViewModel.kt           카드 관리
+├── DeckSettingActivity.kt                                덱별 하루 한도 설정
+├── GradeHint.kt                                          채점 버튼 간격 표시
+├── Appdatabase.kt, *Entity.kt, *Dao.kt                   Room DB
+├── completion/                                           완주 모드 (알고리즘, 설정 화면, 학습 화면, 허용 시간 계산)
+├── gemini/                                               AI 카드 생성 (프롬프트, 퓨샷 예시, API 키 저장, 이미지 처리)
+└── weak/                                                 약점 카드 판정
+app/src/test/java/com/example/anki_advanced/              단위 테스트
+```
+
 ## 실행 방법
 
-1. Android Studio로 프로젝트를 열고 `app`을 실행합니다.
+1. Android Studio로 프로젝트를 열고 `app`을 실행합니다. (Android 7.0 이상, 카메라 입력을 쓰려면 카메라 권한 허용)
 2. AI 카드 생성을 쓰려면 앱의 **AI로 덱 만들기** 화면에서 본인의 Gemini API 키를 입력합니다([Google AI Studio](https://aistudio.google.com/)에서 무료 발급).
 3. 단위 테스트: `./gradlew :app:testDebugUnitTest`
+
+## 현재 한계
+
+- 하단 탭의 **통계 · 설정**은 아직 버튼만 있고 화면이 없습니다.
+- 완주 모드의 하루 학습 허용 시간대는 알고리즘과 DB에는 있지만, 설정 화면이 없어 하루 전체(0~24시)로 동작합니다.
+- 데이터베이스 마이그레이션이 빠졌을 때 데이터를 초기화하는 설정(`fallbackToDestructiveMigration`)이 남아 있습니다.
+- AI가 만든 카드는 틀린 내용이 있을 수 있어, 저장 전에 미리보기에서 확인하도록 했습니다.
 
 ## 앞으로 할 일
 
 - 기기 간 동기화 (계정 · 클라우드 백업)
 - 오버레이 학습 (다른 앱 위에 카드 표시)
 - 압박 모드 (제한 시간 + 되돌리기 없음)
-- 학습 통계 시각화와 복습 알림
+- 통계 화면(학습량 · 정답률 · 망각곡선)과 복습 알림
+- 설정 화면과 완주 모드 허용 시간대 설정
 - 배포 전 `fallbackToDestructiveMigration` 제거
